@@ -147,6 +147,12 @@ private struct SourceMenu: View {
                 }
             }
         }
+        Section("App audio") {
+            ForEach(choices.appAudio, id: \.source) { choice in
+                Button(choice.title) { pick(choice.source) }
+                    .disabled(choice.inUse && choice.source != current)
+            }
+        }
     }
 }
 
@@ -171,6 +177,8 @@ private struct SourcePicker: View {
                     ForEach(choices.devices, id: \.uid) { device in
                         group(device.name, device.options, note: device.note)
                     }
+                    group("App audio", choices.appAudio,
+                          note: "Records what apps play, which keeps playing on the Mac as usual. macOS asks once before Lavboard can record app audio.")
                     if choices.systems.isEmpty && choices.devices.isEmpty {
                         Text("Plug in a mic, an audio interface or a wireless receiver to add it here.")
                             .font(.callout)
@@ -350,6 +358,10 @@ struct TrackStrip: View {
             } else {
                 compact ? track.source.channelLabel : "\(Track.shortDeviceName(name)), \(track.source.channelLabel)"
             }
+        case .app:
+            app.engine.appRunning[track.source.identity] == false ? "Not running" : track.source.channelLabel
+        case .systemAudio:
+            track.source.channelLabel
         }
     }
 
@@ -371,6 +383,10 @@ struct TrackStrip: View {
             app.engine.receivers[system] == nil ? "Receiver not connected" : "No channel for TX\(slot + 1) in this mode"
         case .device(_, let name, _, _):
             "Plug in \(name)"
+        case .app(_, let name):
+            "Open \(name)"
+        case .systemAudio:
+            "Mac audio unavailable"
         }
     }
 }
@@ -483,6 +499,14 @@ private struct GainRow: View {
                 }
             }
             .help("Gain on the transmitter itself. It changes the signal everywhere, including recordings and the receiver's own outputs.")
+        } else if track.source.isTap {
+            Text(compact ? "Level in app" : "Set the level in the app")
+                .font(.system(size: 11))
+                .foregroundStyle(Console.engraving)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(height: 22)
+                .help("Lavboard records what the app plays; change its volume in the app itself")
         } else if track.source.transmitter != nil {
             Text(compact ? "Gain on mic" : "Set gain on the mic")
                 .font(.system(size: 11))

@@ -70,6 +70,15 @@ enum DebugBridge {
             let stereo = parts.count > 3 && parts[3] == "stereo"
             app.addTrack(.device(uid: device.uid, name: device.name, channel: channel - 1, stereo: stereo),
                          name: Track.defaultName(deviceName: device.name, channel: channel - 1, stereo: stereo, deviceChannels: device.inputChannels))
+        case "addapp":
+            // addapp <app name or bundle ID fragment> | addapp system
+            if arg == "system" {
+                app.addTrack(.systemAudio, name: "Mac audio")
+            } else if let match = AppAudio.apps(from: AppAudio.processes()).first(where: {
+                $0.bundleID.localizedCaseInsensitiveContains(rest) || $0.name.localizedCaseInsensitiveContains(rest)
+            }) {
+                app.addTrack(.app(bundleID: match.bundleID, name: match.name), name: match.name)
+            }
         case "movetrack" where parts.count >= 3:
             // movetrack <track 1...> <offset>
             let i = (Int(arg) ?? 1) - 1
@@ -148,6 +157,7 @@ enum DebugBridge {
                  "underruns": own.stats.underruns, "overflows": own.stats.overflows] as [String: Any]
             },
             "trackLatencyMs": app.engine.trackLatencyMs.map { $0 ?? -1 },
+            "audioApps": AppAudio.apps(from: AppAudio.processes()).map { "\($0.name) [\($0.processes.count)\($0.playing ? ", playing" : "")]" },
             "tracks": app.tracks.enumerated().map { i, track in
                 ["name": track.name, "source": track.source.channelLabel, "stereo": track.source.isStereo,
                  "available": app.engine.trackAvailable.indices.contains(i) && app.engine.trackAvailable[i],

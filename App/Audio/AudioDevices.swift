@@ -35,13 +35,15 @@ enum CoreAudioHAL {
         AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
     }
 
-    static func devices() -> [AudioDeviceInfo] {
+    /// Every audio device except those in `skipping`, which are never queried: a device the engine
+    /// is still setting up can block property reads for as long as coreaudiod takes.
+    static func devices(skipping: Set<AudioObjectID> = []) -> [AudioDeviceInfo] {
         var addr = address(kAudioHardwarePropertyDevices)
         var size: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size) == noErr else { return [] }
         var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
         guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &ids) == noErr else { return [] }
-        return ids.compactMap { id in
+        return ids.filter { !skipping.contains($0) }.compactMap { id in
             // Skip Lavboard's own aggregate before touching it: while the engine queue is setting
             // it up, its other properties can block for as long as coreaudiod takes.
             guard let uid = string(id, kAudioDevicePropertyDeviceUID), !uid.hasPrefix(EngineSession.uidPrefix) else { return nil }
@@ -99,6 +101,12 @@ enum CoreAudioHAL {
             }
         }
         return float64(id, kAudioDevicePropertyNominalSampleRate)
+    }
+
+    /// UID of the system's default output device.
+    static func defaultOutputUID() -> String? {
+        let id = uint32(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice)
+        return id == 0 ? nil : string(id, kAudioDevicePropertyDeviceUID)
     }
 
     /// Smallest IO buffer the device allows, in frames.

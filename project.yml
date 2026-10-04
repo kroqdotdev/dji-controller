@@ -37,6 +37,7 @@ targets:
         LSApplicationCategoryType: public.app-category.music
         LSMinimumSystemVersion: "15.0"
         NSMicrophoneUsageDescription: Lavboard listens to your wireless receivers and other mics to meter, mix and record them.
+        NSAudioCaptureUsageDescription: Lavboard records what the apps you add as tracks play, to mix them into your stream and recordings.
         # Updates (Sparkle): the feed is always the newest published release's appcast.xml.
         SUFeedURL: https://github.com/kroqdotdev/lavboard/releases/latest/download/appcast.xml
         SUPublicEDKey: MubnxR8CJ6FdaPkJdjQTL4zoIS4fZvJYqfdBhSW9xT8=

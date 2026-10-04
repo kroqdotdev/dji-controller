@@ -18,7 +18,8 @@ You need macOS 15 or later. Wireless mic control needs a [supported mic system](
 
 ## What it does
 
-- **Up to eight tracks**, each with a live meter, fader and mute. Start with one per DJI transmitter (with battery status), then click **Add track** for a USB mic, the built-in mic, a webcam, a Bluetooth mic or a channel on an audio interface. Remove any track you don't need. Right-click a strip to rename, recolour, re-source, reorder or remove it.
+- **Up to eight tracks**, each with a live meter, fader and mute. Start with one per DJI transmitter (with battery status), then click **Add track** for a USB mic, the built-in mic, a webcam, a Bluetooth mic, a channel on an audio interface, or the sound of an app. Remove any track you don't need. Right-click a strip to rename, recolour, re-source, reorder or remove it.
+- **App audio** as a track: what one app plays (a video call, a browser, music) or everything on the Mac. It keeps playing on the Mac as usual and joins the stream and recordings. macOS asks once for permission to record app audio.
 - **Mono or stereo** per track. Stereo tracks take an input pair and get a balance control.
 - **Mute with keys 1 to 8.** Mutes are instant and click-free.
 - **Hardware gain** on each transmitter (-12 to +12 dB), confirmed by the receiver, and on other inputs when the device allows it.
@@ -65,12 +66,14 @@ Run the tests with `xcodebuild -project Lavboard.xcodeproj -scheme Lavboard test
 2. Switch the receiver to **4-track** (the banner offers it). Each mic then arrives on its own channel. The receiver restarts for a few seconds.
 3. On the **Stream** strip, click **Set up** to install the virtual mic. macOS asks for your password once, because audio drivers live in `/Library/Audio/Plug-Ins/HAL`. Then pick **Lavboard** as the mic in your streaming app.
 4. Pick a wired output on the **Venue** strip if you feed a PA.
+5. The first time you add app audio, macOS asks whether Lavboard may record it. If app audio stays silent, check **System Settings > Privacy & Security > Screen & System Audio Recording**.
 
 ## How it works
 
 - **Mic systems:** each module conforms to `MicSystem` in [`Packages/MicSystemKit`](Packages/MicSystemKit): it recognises its receiver's audio device, says which channel carries each transmitter, and reports optional capabilities (gain, battery, modes, settings). The app draws every control from those capabilities.
 - **DJI control:** the receiver exposes a vendor USB interface (`com.dji.mic`, interface 4). Selecting alternate setting 1 opens two bulk endpoints that carry DJI's DUML protocol: status pushes for the receiver and each transmitter, and set-parameter commands. See `Packages/DJIMicMini2S`.
 - **Audio:** the app builds a private aggregate device from the inputs your tracks use and the outputs. The receiver (or the first input, without one) is the clock master and every other device is drift-compensated, so mixing happens in one small-buffer CoreAudio callback. Bluetooth mics and devices without 48 kHz (many webcams) run on their own clock instead: each is captured separately and converted to 48 kHz by a windowed-sinc resampler that follows its clock drift (`App/Audio/AsyncSource.c`). Their tracks run a little behind the others; the strip shows by how much. The mixer core is lock-free C (`App/Audio/AudioCore.c`).
+- **App audio:** a CoreAudio process tap (macOS 14.2 and later) captures one app's processes, including helpers such as a browser's web-content processes, or everything except Lavboard, OBS and Streamlabs, so the stream never feeds back into itself. Each tap runs in a small private aggregate device and goes through the same resampler as Bluetooth mics. When an app starts or stops playing, the running tap takes the new process list without stopping, so the mics never drop out.
 - **Recording:** the audio callback writes into a lock-free ring buffer that a background thread drains to disk.
 - **Stream device:** a virtual audio driver built from [BlackHole](https://github.com/ExistentialAudio/BlackHole), customised through `Driver/StreamDriverConfig.h` without editing its source.
 
