@@ -1,4 +1,44 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#e11d48"/>
-  <text x="32" y="32" dy="0.35em" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="26" font-weight="600" fill="#ffffff">DC</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <title>DJI Controller</title>
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#323A40"/>
+      <stop offset="1" stop-color="#1F2428"/>
+    </linearGradient>
+    <!-- A piece of hand-torn console tape, centred on the origin -->
+    <path id="tape" d="M-52 -34 H52 L47 -23 L53 -12 L47 -1 L53 10 L47 21 L52 34 H-52 L-47 23 L-53 12 L-47 1 L-53 -10 L-47 -21 Z"/>
+    <g id="cap">
+      <rect x="-46" y="-26" width="92" height="52" rx="9" fill="#9AA4AB"/>
+      <rect x="-46" y="-3.5" width="92" height="7" fill="#1D2024"/>
+    </g>
+  </defs>
+
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#body)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="#E6E9EB" stroke-opacity="0.07" stroke-width="3"/>
+
+  <!-- Fader slots -->
+  <g fill="#14181B">
+    <rect x="288" y="380" width="24" height="420" rx="12"/>
+    <rect x="430" y="380" width="24" height="420" rx="12"/>
+    <rect x="572" y="380" width="24" height="420" rx="12"/>
+    <rect x="714" y="380" width="24" height="420" rx="12"/>
+  </g>
+
+  <!-- Tape labels, applied by hand -->
+  <g fill="#0B0E10" fill-opacity="0.3">
+    <use href="#tape" transform="translate(300 276) rotate(-4)"/>
+    <use href="#tape" transform="translate(442 270) rotate(2.5)"/>
+    <use href="#tape" transform="translate(584 277) rotate(-1.5)"/>
+    <use href="#tape" transform="translate(726 271) rotate(3.5)"/>
+  </g>
+  <use href="#tape" fill="#F4A964" transform="translate(300 270) rotate(-4)"/>
+  <use href="#tape" fill="#F2A0B4" transform="translate(442 264) rotate(2.5)"/>
+  <use href="#tape" fill="#F2D65E" transform="translate(584 271) rotate(-1.5)"/>
+  <use href="#tape" fill="#93BDF4" transform="translate(726 265) rotate(3.5)"/>
+
+  <!-- Faders mid-mix -->
+  <use href="#cap" transform="translate(300 576)"/>
+  <use href="#cap" transform="translate(442 680)"/>
+  <use href="#cap" transform="translate(584 520)"/>
+  <use href="#cap" transform="translate(726 622)"/>
 </svg>

@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+build/
+DJIController.xcodeproj/
+App/Info.plist
+Driver/Info.plist
+Config/Local.xcconfig

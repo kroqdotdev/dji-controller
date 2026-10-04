@@ -1,0 +1,98 @@
+name: DJIController
+options:
+  bundleIdPrefix: com.sauerdev
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+configFiles:
+  Debug: Config/Signing.xcconfig
+  Release: Config/Signing.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    GCC_C_LANGUAGE_STANDARD: gnu17
+targets:
+  DJIController:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: DJI Controller
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSApplicationCategoryType: public.app-category.music
+        LSMinimumSystemVersion: "15.0"
+        NSMicrophoneUsageDescription: DJI Controller captures the four DJI transmitter channels to meter, mix and record them.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sauerdev.djicontroller
+        PRODUCT_NAME: DJIController
+        SWIFT_OBJC_BRIDGING_HEADER: App/Audio/AudioCore-Bridging.h
+        ENABLE_HARDENED_RUNTIME: NO
+        GCC_OPTIMIZATION_LEVEL: 3
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - target: DJIControllerStream
+        embed: true
+        codeSign: false
+        copy:
+          destination: resources
+  DJIControllerStream:
+    type: bundle
+    platform: macOS
+    sources:
+      - path: Vendor/BlackHole/BlackHole.c
+      - path: Driver/StreamDriverConfig.h
+        buildPhase: none
+    info:
+      path: Driver/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: English
+        CFBundleName: DJIControllerStream
+        CFBundleShortVersionString: "0.7.1"
+        CFBundleVersion: "1"
+        CFPlugInFactories:
+          b1d23d06-ac22-4aed-8b28-511a4b8bdb89: BlackHole_Create
+        CFPlugInTypes:
+          443ABAB8-E7B3-491A-B985-BEB9187030DB: [b1d23d06-ac22-4aed-8b28-511a4b8bdb89]
+    dependencies:
+      - sdk: CoreAudio.framework
+      - sdk: CoreFoundation.framework
+      - sdk: Accelerate.framework
+    settings:
+      base:
+        PRODUCT_NAME: DJIControllerStream
+        PRODUCT_BUNDLE_IDENTIFIER: com.sauerdev.djicontroller.stream
+        WRAPPER_EXTENSION: driver
+        INSTALL_PATH: /Library/Audio/Plug-Ins/HAL
+        SKIP_INSTALL: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        GCC_OPTIMIZATION_LEVEL: s
+        OTHER_CFLAGS: ["-include", "$(SRCROOT)/Driver/StreamDriverConfig.h"]
+        GCC_WARN_INHIBIT_ALL_WARNINGS: YES
+  DJIControllerTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: DJIController
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sauerdev.djicontroller.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_OBJC_BRIDGING_HEADER: App/Audio/AudioCore-Bridging.h
+schemes:
+  DJIController:
+    build:
+      targets:
+        DJIController: all
+        DJIControllerTests: [test]
+    test:
+      targets:
+        - DJIControllerTests
