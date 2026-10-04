@@ -8,8 +8,15 @@ struct AudioDeviceInfo: Identifiable, Hashable {
     var modelUID: String
     var inputChannels: Int
     var outputChannels: Int
+    var transportType: UInt32 = 0
+    var supports48k = true
 
     var isDJIReceiver: Bool { modelUID.contains("2CA3:4015") || modelUID.contains("2CA3:4115") }
+    var isBluetooth: Bool {
+        transportType == kAudioDeviceTransportTypeBluetooth || transportType == kAudioDeviceTransportTypeBluetoothLE
+    }
+    /// Devices that can run inside the 48 kHz engine as a clocked, sample-aligned source.
+    var canJoinEngine: Bool { supports48k && !isBluetooth }
 }
 
 /// Thin wrappers over the CoreAudio HAL property API.
@@ -30,8 +37,41 @@ enum CoreAudioHAL {
             return AudioDeviceInfo(id: id, uid: uid, name: string(id, kAudioObjectPropertyName) ?? uid,
                                    modelUID: string(id, kAudioDevicePropertyModelUID) ?? "",
                                    inputChannels: bufferLayout(id, kAudioObjectPropertyScopeInput).reduce(0, +),
-                                   outputChannels: bufferLayout(id, kAudioObjectPropertyScopeOutput).reduce(0, +))
+                                   outputChannels: bufferLayout(id, kAudioObjectPropertyScopeOutput).reduce(0, +),
+                                   transportType: uint32(id, kAudioDevicePropertyTransportType),
+                                   supports48k: supportsRate(id, 48_000))
         }
+    }
+
+    static func supportsRate(_ id: AudioObjectID, _ rate: Float64) -> Bool {
+        var addr = address(kAudioDevicePropertyAvailableNominalSampleRates)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else { return false }
+        var ranges = [AudioValueRange](repeating: AudioValueRange(), count: Int(size) / MemoryLayout<AudioValueRange>.size)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &ranges) == noErr else { return false }
+        return ranges.contains { $0.mMinimum <= rate && rate <= $0.mMaximum }
+    }
+
+    /// The device's own input gain, in dB, when the system lets apps change it (many USB mics do).
+    static func inputGain(_ id: AudioObjectID) -> (value: Double, range: ClosedRange<Double>)? {
+        var addr = address(kAudioDevicePropertyVolumeDecibels, kAudioObjectPropertyScopeInput)
+        var settable: DarwinBoolean = false
+        guard AudioObjectHasProperty(id, &addr),
+              AudioObjectIsPropertySettable(id, &addr, &settable) == noErr, settable.boolValue else { return nil }
+        var db: Float32 = 0
+        var size = UInt32(MemoryLayout<Float32>.size)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &db) == noErr else { return nil }
+        var rangeAddr = address(kAudioDevicePropertyVolumeRangeDecibels, kAudioObjectPropertyScopeInput)
+        var range = AudioValueRange()
+        size = UInt32(MemoryLayout<AudioValueRange>.size)
+        guard AudioObjectGetPropertyData(id, &rangeAddr, 0, nil, &size, &range) == noErr, range.mMaximum > range.mMinimum else { return nil }
+        return (Double(db), range.mMinimum...range.mMaximum)
+    }
+
+    static func setInputGain(_ id: AudioObjectID, dB: Double) {
+        var addr = address(kAudioDevicePropertyVolumeDecibels, kAudioObjectPropertyScopeInput)
+        var value = Float32(dB)
+        AudioObjectSetPropertyData(id, &addr, 0, nil, UInt32(MemoryLayout<Float32>.size), &value)
     }
 
     static func string(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String? {

@@ -36,18 +36,24 @@ final class Recorder {
         format = Format(rawValue: UserDefaults.standard.string(forKey: "recordingFormat") ?? "") ?? .pcm24
     }
 
-    func start(core: OpaquePointer, trackNames: [String]) {
+    /// One file per track (mono or stereo, matching the track) plus the stereo mix.
+    func start(core: OpaquePointer, tracks: [(name: String, channels: Int)]) {
         guard !isRecording else { return }
         error = nil
+        guard AudioCoreRingChannels(core) == tracks.reduce(2, { $0 + $1.channels }) else {
+            error = "Couldn't start recording: the tracks are still being set up. Try again in a moment."
+            return
+        }
         let stamp = DateFormatter()
         stamp.dateFormat = "yyyy-MM-dd HH.mm.ss"
         let session = folder.appendingPathComponent("Session \(stamp.string(from: Date()))")
         do {
             try FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)
-            let names = trackNames.enumerated().map { i, name in
-                String(format: "%02d %@.wav", i + 1, Self.sanitize(name.isEmpty ? "Mic \(i + 1)" : name))
-            } + ["05 Mix.wav"]
-            writer = try TrackWriter(core: core, folder: session, names: names, format: format)
+            let files = tracks.enumerated().map { i, track in
+                (name: String(format: "%02d %@.wav", i + 1, Self.sanitize(track.name.isEmpty ? "Track \(i + 1)" : track.name)),
+                 channels: track.channels)
+            } + [(name: String(format: "%02d Mix.wav", tracks.count + 1), channels: 2)]
+            writer = try TrackWriter(core: core, folder: session, files: files, format: format)
             writer?.start()
             lastFolder = session
             startedAt = Date()
@@ -76,16 +82,18 @@ final class Recorder {
 private final class TrackWriter: @unchecked Sendable {
     private let core: OpaquePointer
     private var files: [ExtAudioFileRef] = []
+    /// Channel count of each file, in ring-buffer column order.
+    private var fileChannels: [Int] = []
     private var thread: Thread?
     private let stopLock = NSCondition()
     private var stopRequested = false
     private var finished = false
 
-    init(core: OpaquePointer, folder: URL, names: [String], format: Recorder.Format) throws {
+    init(core: OpaquePointer, folder: URL, files specs: [(name: String, channels: Int)], format: Recorder.Format) throws {
         self.core = core
-        for (i, name) in names.enumerated() {
-            let channels: UInt32 = i == AC_MAX_INPUTS ? 2 : 1
-            files.append(try Self.makeFile(url: folder.appendingPathComponent(name), channels: channels, format: format))
+        for spec in specs {
+            files.append(try Self.makeFile(url: folder.appendingPathComponent(spec.name), channels: UInt32(spec.channels), format: format))
+            fileChannels.append(spec.channels)
         }
     }
 
@@ -112,10 +120,9 @@ private final class TrackWriter: @unchecked Sendable {
 
     private func run() {
         let chunk: UInt32 = 4096
-        let ringChannels = Int(AC_RING_CHANNELS)
+        let ringChannels = Int(AudioCoreRingChannels(core))
         var interleaved = [Float](repeating: 0, count: Int(chunk) * ringChannels)
-        var mono = [Float](repeating: 0, count: Int(chunk))
-        var stereo = [Float](repeating: 0, count: Int(chunk) * 2)
+        var scratch = [Float](repeating: 0, count: Int(chunk) * 2)
         while true {
             stopLock.lock()
             let stopping = stopRequested
@@ -125,15 +132,14 @@ private final class TrackWriter: @unchecked Sendable {
                 frames = interleaved.withUnsafeMutableBufferPointer { AudioCoreReadRecorded(core, $0.baseAddress!, chunk) }
                 guard frames > 0 else { break }
                 let n = Int(frames)
-                for track in 0..<Int(AC_MAX_INPUTS) {
-                    for f in 0..<n { mono[f] = interleaved[f * ringChannels + track] }
-                    write(file: files[track], samples: &mono, frames: frames, channels: 1)
+                var column = 0
+                for (file, channels) in zip(files, fileChannels) {
+                    for f in 0..<n {
+                        for c in 0..<channels { scratch[f * channels + c] = interleaved[f * ringChannels + column + c] }
+                    }
+                    write(file: file, samples: &scratch, frames: frames, channels: UInt32(channels))
+                    column += channels
                 }
-                for f in 0..<n {
-                    stereo[f * 2] = interleaved[f * ringChannels + 4]
-                    stereo[f * 2 + 1] = interleaved[f * ringChannels + 5]
-                }
-                write(file: files[Int(AC_MAX_INPUTS)], samples: &stereo, frames: frames, channels: 2)
             } while frames == chunk
             if stopping { break }
             Thread.sleep(forTimeInterval: 0.02)

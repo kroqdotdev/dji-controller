@@ -9,13 +9,27 @@ enum DebugBridge {
     static let name = Notification.Name("com.sauerdev.lavboard.debug")
 
     static func install(_ app: AppModel) {
-        DistributedNotificationCenter.default().addObserver(forName: name, object: nil, queue: .main) { note in
+        receiver.app = app
+        // Deliver even while the app is in the background; the block-based API would hold
+        // notifications until the app becomes active.
+        DistributedNotificationCenter.default().addObserver(receiver, selector: #selector(Receiver.received(_:)),
+                                                            name: name, object: nil, suspensionBehavior: .deliverImmediately)
+    }
+
+    private static let receiver = Receiver()
+
+    private final class Receiver: NSObject {
+        weak var app: AppModel?
+
+        @objc func received(_ note: Notification) {
             guard let command = note.object as? String else { return }
-            MainActor.assumeIsolated { handle(command, app) }
+            MainActor.assumeIsolated {
+                if let app { DebugBridge.handle(command, app) }
+            }
         }
     }
 
-    private static func handle(_ command: String, _ app: AppModel) {
+    fileprivate static func handle(_ command: String, _ app: AppModel) {
         let parts = command.split(separator: " ").map(String.init)
         guard let verb = parts.first else { return }
         let arg = parts.count > 1 ? parts[1] : ""
@@ -30,11 +44,31 @@ enum DebugBridge {
         case "gain":
             app.receiver.setGain(slot: (Int(arg) ?? 1) - 1, dB: number)
         case "fader":
-            app.strips[(Int(arg) ?? 1) - 1].faderDB = Double(number)
+            let i = (Int(arg) ?? 1) - 1
+            if app.tracks.indices.contains(i) { app.tracks[i].faderDB = Double(number) }
+        case "balance":
+            let i = (Int(arg) ?? 1) - 1
+            if app.tracks.indices.contains(i) { app.tracks[i].balance = Double(parts.last ?? "") ?? 0 }
         case "label" where parts.count >= 3:
             let i = (Int(arg) ?? 1) - 1
-            app.strips[i].color = TapeColor(rawValue: parts[2]) ?? .white
-            if parts.count > 3 { app.strips[i].name = parts[3...].joined(separator: " ") }
+            guard app.tracks.indices.contains(i) else { break }
+            app.tracks[i].color = TapeColor(rawValue: parts[2]) ?? .white
+            if parts.count > 3 { app.tracks[i].name = parts[3...].joined(separator: " ") }
+        case "addtx":
+            // addtx <1-4>
+            let slot = (Int(arg) ?? 1) - 1
+            app.addTrack(.transmitter(slot: slot), name: "TX\(slot + 1)")
+        case "adddevice":
+            // adddevice <name or uid fragment> <channel 1...> [stereo]
+            guard parts.count >= 3, let channel = Int(parts[2]), channel >= 1,
+                  let device = app.engine.inputs.first(where: { $0.uid.contains(arg) || $0.name.localizedCaseInsensitiveContains(arg) })
+            else { break }
+            let stereo = parts.count > 3 && parts[3] == "stereo"
+            app.addTrack(.device(uid: device.uid, name: device.name, channel: channel - 1, stereo: stereo),
+                         name: Track.defaultName(deviceName: device.name, channel: channel - 1, stereo: stereo, deviceChannels: device.inputChannels))
+        case "removetrack":
+            let i = (Int(arg) ?? 1) - 1
+            if app.tracks.indices.contains(i) { app.removeTrack(app.tracks[i].id) }
         case "update":
             app.updates.install()
         case "checkupdates":
@@ -72,12 +106,14 @@ enum DebugBridge {
 
     private static func writeStatus(_ app: AppModel, to path: String) {
         let meters = app.engine.readMeters()
-        let peaks = withUnsafeBytes(of: meters.peak) { Array($0.bindMemory(to: Float.self)) }
+        let left = withUnsafeBytes(of: meters.peakLeft) { Array($0.bindMemory(to: Float.self)) }
+        let right = withUnsafeBytes(of: meters.peakRight) { Array($0.bindMemory(to: Float.self)) }
         let db = { (v: Float) -> Double in v > 0 ? Double(20 * log10(v)) : -200 }
         let engineState: String
         switch app.engine.state {
         case .running: engineState = "running"
-        case .waitingForReceiver: engineState = "waiting"
+        case .idle: engineState = "idle"
+        case .waitingForInputs: engineState = "waiting"
         case .failed(let m): engineState = "failed: \(m)"
         }
         let status: [String: Any] = [
@@ -88,14 +124,20 @@ enum DebugBridge {
                  "pendingGain": app.receiver.pendingGain[i] as Any, "battery": tx?.status?.batteryLevel ?? 0]
             },
             "engine": engineState,
-            "inputChannels": app.engine.inputChannels,
+            "engineWarning": app.engine.warning ?? "-",
+            "venueLatencyMs": app.engine.venueLatencyMs ?? -1,
+            "canRecord": app.canRecord,
+            "tracks": app.tracks.enumerated().map { i, track in
+                ["name": track.name, "source": track.source.channelLabel, "stereo": track.source.isStereo,
+                 "available": app.engine.trackAvailable.indices.contains(i) && app.engine.trackAvailable[i],
+                 "muted": app.isMuted(track), "peakLeftDB": db(left[i]), "peakRightDB": db(right[i])] as [String: Any]
+            },
+            "inputs": app.engine.inputs.map { "\($0.name) [\($0.inputChannels) ch\($0.canJoinEngine ? "" : ", async")]" },
             "bufferFrames": app.engine.actualBufferFrames,
             "callbacks": meters.callbacks,
-            "peaksDB": peaks.map(db),
             "streamPeakDB": db(meters.streamPeak),
             "venuePeakDB": db(meters.venuePeak),
-            "uiLevelsDB": app.meters.channels.map { Double($0.level) },
-            "muted": app.muted,
+            "uiLevelsDB": app.meters.tracks.prefix(app.tracks.count).map { Double($0.left.level) },
             "recording": app.recorder.isRecording,
             "lastFolder": app.recorder.lastFolder?.path ?? "",
             "recorderError": app.recorder.error ?? "",

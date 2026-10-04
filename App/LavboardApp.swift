@@ -9,8 +9,9 @@ struct LavboardApp: App {
         Window("Lavboard", id: "main") {
             ContentView()
                 .environment(app)
-                .frame(minWidth: 1060, minHeight: 700)
+                .frame(minHeight: 700)
         }
+        .defaultSize(width: 1360, height: 780)
         .windowToolbarStyle(.unified)
         .windowResizability(.contentMinSize)
         .commands {

@@ -14,6 +14,9 @@ enum Console {
     static let green = Color(hex: 0x4CC38A)
     static let amber = Color(hex: 0xF2B33D)
 
+    /// Every tape label has the same height, whatever its text, so strips line up.
+    static let tapeHeight: CGFloat = 36
+
     /// Radius rule: containers 10, keys 6, tape 2.
     enum Radius {
         static let container: CGFloat = 10

@@ -4,9 +4,9 @@
 
 A native macOS mixer for wireless lav mics, made for the DJI Mic Mini 2S. Plug the receiver into your Mac and control every transmitter from one window: gain, mute, levels, names, recording, and separate feeds for your stream and the venue's PA.
 
-Built for running live event streams and podcasts with up to four wireless mics.
+Built for running live event streams and podcasts with up to eight tracks: the four DJI mics plus any other mic or audio interface on your Mac.
 
-![Lavboard mixing four wireless mics labelled Host, Guest, Panel and Q&A, with the Q&A mic muted](docs/screenshot.png)
+![Lavboard mixing four wireless mics labelled Host, Guest, Panel and Q&A, with the Q&A mic muted and a slot for adding more tracks](docs/screenshot.png)
 
 ## Download
 
@@ -14,15 +14,16 @@ Get **Lavboard** from the [latest release](https://github.com/kroqdotdev/lavboar
 
 Lavboard checks for updates every time it starts. When a new version is out, an **Update** button appears in the toolbar: one click downloads it, installs it and restarts the app. You can also choose **Check for Updates…** from the Lavboard menu. (Version 0.1.0 predates the updater, so install 0.1.1 or later once by hand.)
 
-You need macOS 15 or later and a DJI Mic Mini 2S receiver (USB ID `2ca3:4015`, or `2ca3:4115` in 4-track mode) with Mini 2S transmitters.
+You need macOS 15 or later. For the wireless mics you need a DJI Mic Mini 2S receiver (USB ID `2ca3:4015`, or `2ca3:4115` in 4-track mode) with Mini 2S transmitters. Without one, Lavboard works as a mixer for your other inputs.
 
 ## What it does
 
-- **Four channel strips**, one per transmitter, with a live meter, fader, mute and battery status.
-- **Mute with keys 1 to 4.** Mutes are instant and click-free.
-- **Hardware gain** on each transmitter (-12 to +12 dB), confirmed by the receiver.
-- **Names and tape colours** per mic, so you know who is wearing which one.
-- **4-track recording**: one WAV per mic (recorded before mute and fader, so a cough-mute never loses material) plus a stereo mix. Optional backup recording on the transmitters themselves.
+- **Up to eight tracks**, each with a live meter, fader and mute. Start with one per DJI transmitter (with battery status), then click **Add track** for a USB mic, the built-in mic or a channel on an audio interface. Remove any track you don't need.
+- **Mono or stereo** per track. Stereo tracks take an input pair and get a balance control.
+- **Mute with keys 1 to 8.** Mutes are instant and click-free.
+- **Hardware gain** on each transmitter (-12 to +12 dB), confirmed by the receiver, and on other inputs when the device allows it.
+- **Names and tape colours** per track, so you know who is wearing which mic.
+- **Multitrack recording**: one WAV per track (recorded before mute and fader, so a cough-mute never loses material) plus a stereo mix. Optional backup recording on the transmitters themselves.
 - **Stream output** through a built-in virtual mic called "Lavboard" that Streamlabs, OBS or any other app can select.
 - **Venue output** to any wired output, with its own level and per-mic sends. It adds about 6 to 8 ms on top of the wireless link.
 - **Receiver settings**: mono, stereo or 4-track mode, noise cancellation and low cut.
@@ -56,7 +57,7 @@ Run the tests with `xcodebuild -project Lavboard.xcodeproj -scheme Lavboard test
 ## How it works
 
 - **Control:** the receiver exposes a vendor USB interface (`com.dji.mic`, interface 4). Selecting alternate setting 1 opens two bulk endpoints that carry DJI's DUML protocol: status pushes for the receiver and each transmitter, and set-parameter commands. See `App/Device`.
-- **Audio:** the app builds a private aggregate device with the receiver as clock master and the outputs drift-compensated, so mixing happens in one small-buffer CoreAudio callback. The mixer core is lock-free C (`App/Audio/AudioCore.c`).
+- **Audio:** the app builds a private aggregate device from the inputs your tracks use and the outputs. The receiver (or the first input, without one) is the clock master and every other device is drift-compensated, so mixing happens in one small-buffer CoreAudio callback. Inputs must run at 48 kHz; Bluetooth mics and devices without 48 kHz support are not offered yet. The mixer core is lock-free C (`App/Audio/AudioCore.c`).
 - **Recording:** the audio callback writes into a lock-free ring buffer that a background thread drains to disk.
 - **Stream device:** a virtual audio driver built from [BlackHole](https://github.com/ExistentialAudio/BlackHole), customised through `Driver/StreamDriverConfig.h` without editing its source.
 
