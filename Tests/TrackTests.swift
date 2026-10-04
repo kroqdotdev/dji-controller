@@ -31,7 +31,7 @@ struct TrackTests {
         let legacy = try JSONDecoder().decode([LegacyStripSettings].self, from: Data(json.utf8))
         let tracks = LegacyStripSettings.migrate(legacy)
         #expect(tracks.map(\.name) == ["Glenn", "Mic 2", "Mic 3", "Mic 4"])
-        #expect(tracks.map(\.source) == (0..<4).map { .transmitter(slot: $0) })
+        #expect(tracks.map(\.source) == (0..<4).map { .transmitter(system: "dji-mic-mini-2s", slot: $0) })
         #expect(tracks[0].color == .orange && tracks[0].faderDB == 0.5)
         #expect(tracks[1].sendToVenue == false && tracks[1].color == .white)
     }
@@ -44,7 +44,8 @@ struct TrackTests {
 
         let sparse = #"[{"name":"Host","source":{"transmitter":{"slot":2}}}]"#
         let track = try JSONDecoder().decode([Track].self, from: Data(sparse.utf8))[0]
-        #expect(track.source == .transmitter(slot: 2))
+        // Saved before mic systems were modules: it belongs to the DJI Mic Mini 2S.
+        #expect(track.source == .transmitter(system: "dji-mic-mini-2s", slot: 2))
         #expect(track.faderDB == 0 && track.sendToVenue && track.color == .white)
     }
 
@@ -75,5 +76,15 @@ struct TrackTests {
         #expect(CoreAudioHAL.preferredRate(among: [96_000...96_000, 192_000...192_000]) == 96_000)
         #expect(CoreAudioHAL.preferredRate(among: [8_000...96_000]) == 48_000)
         #expect(CoreAudioHAL.preferredRate(among: []) == nil)
+    }
+
+    @Test func transmitterSourcesRoundTripWithTheirSystem() throws {
+        let sources: [TrackSource] = [.transmitter(system: "rode-wireless-pro", slot: 1),
+                                      .device(uid: "u1", name: "C922", channel: 0, stereo: true)]
+        let json = try JSONEncoder().encode(sources)
+        #expect(try JSONDecoder().decode([TrackSource].self, from: json) == sources)
+        #expect(String(decoding: json, as: UTF8.self).contains(#""system":"rode-wireless-pro""#))
+        // The same slot on two systems is two different sources.
+        #expect(TrackSource.transmitter(system: "a", slot: 0).identity != TrackSource.transmitter(system: "b", slot: 0).identity)
     }
 }

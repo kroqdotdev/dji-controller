@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import MicSystemKit
 import Observation
 import SwiftUI
 
@@ -22,7 +23,8 @@ struct SourceChoice {
 }
 
 struct SourceChoices {
-    var transmitters: [SourceChoice]
+    /// Transmitter slots, grouped by mic system.
+    var systems: [(id: String, name: String, options: [SourceChoice])]
     /// Keyed by UID: two identical USB mics share a name. `note` explains a device on its own clock.
     var devices: [(uid: String, name: String, note: String?, options: [SourceChoice])]
 }
@@ -31,7 +33,8 @@ struct SourceChoices {
 final class AppModel {
     /// Declared first so it runs before the engine and recorder read their saved settings.
     @ObservationIgnored private let legacySettingsMigrated: Void = AppModel.migrateLegacySettings()
-    let receiver = ReceiverModel()
+    /// One instance of every supported wireless mic system, in `MicSystems.all` order.
+    let micSystems: [any MicSystem] = MicSystems.all.map { $0.init() }
     let engine = AudioEngine()
     let recorder = Recorder()
     let streamDevice = StreamDevice()
@@ -80,13 +83,15 @@ final class AppModel {
         // the saved settings.
         guard !Self.isTestHost else { return }
 
+        engine.micSystems = micSystems
         engine.setTracks(tracks.map { ($0.id, $0.source) })
         pushToEngine()
         save()
         engine.setStreamLevel(dB: streamLevelDB)
         engine.setVenueLevel(dB: venueLevelDB)
         engine.start()
-        receiver.start()
+        for system in micSystems { system.start() }
+        watchMicSystemModes()
         updates.shouldDeferRestart = { [weak self] in self?.recorder.isRecording ?? false }
         updates.start()
         // However the app quits (including to install an update), finish recordings cleanly.
@@ -141,7 +146,45 @@ final class AppModel {
     var canAddTrack: Bool { tracks.count < Track.maximum && !recorder.isRecording }
     /// Tracks can't be added, removed or re-sourced mid-recording: the files are fixed at the start.
     var canEditTracks: Bool { !recorder.isRecording }
-    var hasTransmitterTracks: Bool { tracks.contains { $0.source.transmitterSlot != nil } }
+    var hasTransmitterTracks: Bool { tracks.contains { $0.source.transmitter != nil } }
+
+    func micSystem(id: String) -> (any MicSystem)? {
+        micSystems.first { type(of: $0).id == id }
+    }
+
+    /// Systems the desk should show controls for: connected ones, and any a track uses.
+    var activeMicSystems: [any MicSystem] {
+        micSystems.filter { system in
+            let id = type(of: system).id
+            return system.isConnected || engine.receivers[id] != nil || tracks.contains { $0.source.transmitter?.system == id }
+        }
+    }
+
+    /// Whether a system's receiver is plugged in: its control link is up or its audio device is there.
+    func isReceiverPresent(_ system: any MicSystem) -> Bool {
+        system.isConnected || engine.receivers[type(of: system).id] != nil
+    }
+
+    /// What a module reports about the transmitter behind a track, if it is one.
+    func transmitter(for source: TrackSource) -> TransmitterState? {
+        guard let t = source.transmitter, let system = micSystem(id: t.system), system.transmitters.indices.contains(t.slot) else {
+            return nil
+        }
+        return system.transmitters[t.slot]
+    }
+
+    /// A module's transmitter-to-channel mapping can change with its mode without the receiver
+    /// re-enumerating, so mode changes refresh the engine.
+    private func watchMicSystemModes() {
+        withObservationTracking {
+            for system in micSystems { _ = system.currentModeID }
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                self?.engine.refresh()
+                self?.watchMicSystemModes()
+            }
+        }
+    }
 
     func isMuted(_ track: Track) -> Bool { muted.contains(track.id) }
 
@@ -194,15 +237,18 @@ final class AppModel {
     /// Everything a track could use right now, marking sources other tracks already use.
     func sourceChoices() -> SourceChoices {
         let used = Set(tracks.map(\.source.identity))
-        var transmitters: [SourceChoice] = []
-        if engine.receiverDevice != nil || receiver.connected {
-            transmitters = (0..<4).map { slot in
-                let source = TrackSource.transmitter(slot: slot)
-                return SourceChoice(source: source, title: "TX\(slot + 1)", defaultName: "Mic \(slot + 1)",
-                                    inUse: used.contains(source.identity),
-                                    note: receiver.transmitters[slot]?.status == nil ? "Off" : nil)
+        let systems = micSystems.filter { $0.isConnected || engine.receivers[type(of: $0).id] != nil }
+            .map { system -> (id: String, name: String, options: [SourceChoice]) in
+                let kind = type(of: system)
+                let options = (0..<kind.transmitterCount).map { slot in
+                    let source = TrackSource.transmitter(system: kind.id, slot: slot)
+                    // Only a module with a control link knows whether a transmitter is on.
+                    let off = system.isConnected && system.transmitters.indices.contains(slot) && !system.transmitters[slot].connected
+                    return SourceChoice(source: source, title: "TX\(slot + 1)", defaultName: "Mic \(slot + 1)",
+                                        inUse: used.contains(source.identity), note: off ? "Off" : nil)
+                }
+                return (kind.id, kind.name, options)
             }
-        }
         let devices = engine.inputs.filter { $0.usableInputChannels > 0 }
             .map { device -> (uid: String, name: String, note: String?, options: [SourceChoice]) in
             let channels = device.usableInputChannels
@@ -222,7 +268,7 @@ final class AppModel {
             }
             return (device.uid, device.name, Self.ownClockNote(device), options)
         }
-        return SourceChoices(transmitters: transmitters, devices: devices)
+        return SourceChoices(systems: systems, devices: devices)
     }
 
     /// What to expect from a device that can't run on the engine's 48 kHz clock.
@@ -242,7 +288,7 @@ final class AppModel {
 
     func sourceDescription(_ source: TrackSource) -> String {
         switch source {
-        case .transmitter: "DJI receiver, \(source.channelLabel)"
+        case .transmitter(let system, _): "\(micSystem(id: system).map { type(of: $0).name } ?? "Wireless receiver"), \(source.channelLabel)"
         case .device(_, let name, _, _): "\(name), \(source.channelLabel)"
         }
     }
@@ -250,7 +296,7 @@ final class AppModel {
     /// The source device's own input gain, for devices that let apps change it.
     func deviceGain(for track: Track) -> (value: Double, range: ClosedRange<Double>)? {
         _ = deviceGainRevision
-        guard track.source.transmitterSlot == nil, let device = engine.device(for: track.source) else { return nil }
+        guard track.source.transmitter == nil, let device = engine.device(for: track.source) else { return nil }
         return CoreAudioHAL.inputGain(device.id)
     }
 
@@ -272,17 +318,27 @@ final class AppModel {
     func toggleRecording() {
         if recorder.isRecording {
             recorder.stop()
-            if backupOnTransmitters { receiver.setTransmitterRecording(false) }
+            setTransmitterRecording(false)
         } else if canRecord {
             recorder.start(core: engine.core, tracks: tracks.map { ($0.name, $0.source.isStereo ? 2 : 1) })
-            if backupOnTransmitters && recorder.isRecording { receiver.setTransmitterRecording(true) }
+            if recorder.isRecording { setTransmitterRecording(true) }
         }
     }
 
     private func stopRecordingForQuit() {
         guard recorder.isRecording else { return }
         recorder.stop()
-        if backupOnTransmitters { receiver.setTransmitterRecording(false) }
+        setTransmitterRecording(false)
+    }
+
+    /// "Backup on mics": record on every connected system that can.
+    var canBackUpOnTransmitters: Bool { micSystems.contains { $0.canRecordOnTransmitters } }
+
+    private func setTransmitterRecording(_ on: Bool) {
+        guard backupOnTransmitters else { return }
+        for system in micSystems where system.canRecordOnTransmitters && system.isConnected {
+            system.setTransmitterRecording(on)
+        }
     }
 
     private func pushToEngine() {

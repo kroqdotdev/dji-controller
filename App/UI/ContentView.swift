@@ -1,16 +1,26 @@
 import AppKit
+import MicSystemKit
 import SwiftUI
 
 struct ContentView: View {
     @Environment(AppModel.self) private var app
-    @State private var confirmMode: ChannelMode?
+    @State private var pendingMode: PendingModeSwitch?
     @State private var showSettings = false
 
+    /// A mode change waiting for the user to confirm its warning.
+    struct PendingModeSwitch {
+        var system: any MicSystem
+        var mode: ReceiverMode
+        var warning: String
+    }
+
     var body: some View {
-        let receiver = app.receiver
         VStack(spacing: 0) {
-            if app.hasTransmitterTracks, receiver.connected, let mode = receiver.mode, mode != .quad, !receiver.switchingMode {
-                ModeBanner(mode: mode)
+            ForEach(app.micSystems.indices, id: \.self) { i in
+                let system = app.micSystems[i]
+                if let notice = system.notice, app.tracks.contains(where: { $0.source.transmitter?.system == type(of: system).id }) {
+                    NoticeBanner(notice: notice) { switchMode(system, to: $0) }
+                }
             }
             Desk()
             TransportBar()
@@ -26,46 +36,63 @@ struct ContentView: View {
                 ToolbarItem(placement: .primaryAction) { UpdateButton() }
             }
             ToolbarItemGroup(placement: .primaryAction) {
-                if receiver.connected, let mode = receiver.mode, !receiver.switchingMode {
-                    Menu {
-                        ForEach(ChannelMode.allCases, id: \.self) { m in
-                            Button { confirmMode = m } label: {
-                                if m == mode { Label(m.label, systemImage: "checkmark") } else { Text(m.label) }
+                ForEach(app.micSystems.indices, id: \.self) { i in
+                    let system = app.micSystems[i]
+                    if system.isConnected, !system.isSwitchingMode, let current = system.modes.first(where: { $0.id == system.currentModeID }) {
+                        Menu {
+                            ForEach(system.modes) { mode in
+                                Button { switchMode(system, to: mode.id) } label: {
+                                    if mode == current { Label(mode.name, systemImage: "checkmark") } else { Text(mode.name) }
+                                }
+                                .disabled(mode == current)
                             }
-                            .disabled(m == mode)
+                        } label: {
+                            Text(current.name)
                         }
-                    } label: {
-                        Text(mode.label)
+                        .help("\(type(of: system).name) receiver mode")
+                        .disabled(app.recorder.isRecording)
                     }
-                    .help("Receiver channel mode")
-                    .disabled(app.recorder.isRecording)
                 }
                 Button("Settings") { showSettings.toggle() }
-                    .popover(isPresented: $showSettings, arrowEdge: .bottom) { MicSettings().padding(18) }
+                    .popover(isPresented: $showSettings, arrowEdge: .bottom) { AppSettings().padding(18) }
             }
         }
         .toolbarBackground(Console.background, for: .windowToolbar)
         .toolbarBackground(.visible, for: .windowToolbar)
-        .confirmationDialog("Switch the receiver to \(confirmMode?.label ?? "")?",
-                            isPresented: Binding(get: { confirmMode != nil }, set: { if !$0 { confirmMode = nil } })) {
+        .confirmationDialog("Switch the receiver to \(pendingMode?.mode.name ?? "")?",
+                            isPresented: Binding(get: { pendingMode != nil }, set: { if !$0 { pendingMode = nil } })) {
             Button("Switch") {
-                if let m = confirmMode { app.receiver.setMode(m) }
-                confirmMode = nil
+                if let pending = pendingMode { pending.system.setMode(pending.mode.id) }
+                pendingMode = nil
             }
         } message: {
-            Text("Switching to or from 4-track restarts the receiver. Audio drops out for a few seconds.")
+            Text(pendingMode?.warning ?? "")
         }
         .onAppear {
-            // Start with nothing focused so the 1-4 mute keys work immediately.
+            // Start with nothing focused so the 1-8 mute keys work immediately.
             DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
         }
     }
 
+    /// Switches straight away, or asks first if the module warns about the switch.
+    private func switchMode(_ system: any MicSystem, to id: String) {
+        guard let mode = system.modes.first(where: { $0.id == id }) else { return }
+        if let warning = system.modeSwitchWarning(to: id) {
+            pendingMode = PendingModeSwitch(system: system, mode: mode, warning: warning)
+        } else {
+            system.setMode(id)
+        }
+    }
+
     private var title: String {
-        let receiver = app.receiver
-        guard app.hasTransmitterTracks || receiver.connected else { return "Lavboard" }
-        if receiver.switchingMode { return "Receiver restarting" }
-        return receiver.connected ? "Receiver connected" : "Receiver not connected"
+        let active = app.activeMicSystems
+        guard !active.isEmpty else { return "Lavboard" }
+        if active.count == 1 {
+            let system = active[0]
+            if system.isSwitchingMode { return "Receiver restarting" }
+            return app.isReceiverPresent(system) ? "Receiver connected" : "Receiver not connected"
+        }
+        return "\(active.filter(app.isReceiverPresent).count) of \(active.count) receivers connected"
     }
 
     /// The engine only takes over the subtitle when it needs attention.
@@ -73,8 +100,12 @@ struct ContentView: View {
         if case .failed(let message) = app.engine.state { return message }
         if let warning = app.engine.warning { return warning }
         let tracks = app.tracks.count == 1 ? "1 track" : "\(app.tracks.count) tracks"
-        guard app.hasTransmitterTracks, app.receiver.connected else { return tracks }
-        return "\(app.receiver.connectedCount) of 4 mics on, \(tracks)"
+        // Only systems with a control link know which mics are on.
+        let reporting = app.activeMicSystems.filter(\.isConnected)
+        guard app.hasTransmitterTracks, !reporting.isEmpty else { return tracks }
+        let on = reporting.reduce(0) { $0 + $1.transmitters.filter(\.connected).count }
+        let total = reporting.reduce(0) { $0 + type(of: $1).transmitterCount }
+        return "\(on) of \(total) mics on, \(tracks)"
     }
 }
 
@@ -136,26 +167,18 @@ private struct UpdateButton: View {
     }
 }
 
-private struct MicSettings: View {
+private struct AppSettings: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
         @Bindable var engine = app.engine
-        let first = app.receiver.transmitters.compactMap { $0?.status }.first
         Form {
-            Section {
-                Picker("Noise cancellation", selection: Binding(
-                    get: { first?.noise ?? .off },
-                    set: { app.receiver.setNoiseCancellation($0) })) {
-                    ForEach(NoiseCancellation.allCases) { Text($0.label).tag($0) }
+            ForEach(app.activeMicSystems.indices, id: \.self) { i in
+                let system = app.activeMicSystems[i]
+                if !system.settings.isEmpty {
+                    MicSystemSettings(system: system)
                 }
-                .pickerStyle(.segmented)
-                Toggle("Low cut", isOn: Binding(get: { first?.lowCut ?? false }, set: { app.receiver.setLowCut($0) }))
-            } footer: {
-                Text(first == nil ? "Switch on a mic to change these." : "Applies to every connected mic.")
-                    .foregroundStyle(.secondary)
             }
-            .disabled(first == nil)
 
             Section {
                 LabeledContent("Stream device") {
@@ -193,17 +216,54 @@ private struct MicSettings: View {
     }
 }
 
-private struct ModeBanner: View {
+/// One mic system's settings, drawn from what its module declares.
+private struct MicSystemSettings: View {
+    let system: any MicSystem
+
+    var body: some View {
+        Section {
+            ForEach(system.settings) { setting in
+                switch setting.kind {
+                case .toggle:
+                    Toggle(setting.title, isOn: Binding(
+                        get: { if case .toggle(let on) = setting.value { on } else { false } },
+                        set: { system.set(setting.id, to: .toggle($0)) }))
+                        .disabled(setting.value == nil)
+                case .choice(let options):
+                    Picker(setting.title, selection: Binding(
+                        get: { if case .choice(let id) = setting.value { id } else { options.first?.id ?? "" } },
+                        set: { system.set(setting.id, to: .choice($0)) })) {
+                        ForEach(options, id: \.id) { Text($0.name).tag($0.id) }
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(setting.value == nil)
+                }
+            }
+        } header: {
+            Text(type(of: system).name)
+        } footer: {
+            if let note = system.settingsNote {
+                Text(note).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// A module's request to the user, such as switching modes so every mic gets its own channel.
+private struct NoticeBanner: View {
     @Environment(AppModel.self) private var app
-    let mode: ChannelMode
+    let notice: MicNotice
+    let switchMode: (String) -> Void
 
     var body: some View {
         HStack(spacing: 14) {
-            Text("The receiver is in \(mode.label) mode, so all mics arrive mixed together. Switch to 4-track to control each mic.")
+            Text(notice.message)
                 .font(.system(size: 13))
             Spacer()
-            Button("Switch to 4-track") { app.receiver.setMode(.quad) }
-                .disabled(app.recorder.isRecording)
+            if let title = notice.actionTitle, let mode = notice.modeID {
+                Button(title) { switchMode(mode) }
+                    .disabled(app.recorder.isRecording)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -386,9 +446,11 @@ private struct TransportBar: View {
             .disabled(recorder.isRecording)
             .help("File format for the recordings")
 
-            Toggle("Backup on mics", isOn: $app.backupOnTransmitters)
-                .disabled(recorder.isRecording)
-                .help("Also start each transmitter's own 32-bit float recording")
+            if app.canBackUpOnTransmitters {
+                Toggle("Backup on mics", isOn: $app.backupOnTransmitters)
+                    .disabled(recorder.isRecording)
+                    .help("Also start each transmitter's own recording, on mics that can")
+            }
         }
         .padding(.horizontal, 16)
         .frame(height: 64)

@@ -14,7 +14,7 @@ Get **Lavboard** from the [latest release](https://github.com/kroqdotdev/lavboar
 
 Lavboard checks for updates every time it starts. When a new version is out, an **Update** button appears in the toolbar: one click downloads it, installs it and restarts the app. You can also choose **Check for Updates…** from the Lavboard menu. (Version 0.1.0 predates the updater, so install 0.1.1 or later once by hand.)
 
-You need macOS 15 or later. For the wireless mics you need a DJI Mic Mini 2S receiver (USB ID `2ca3:4015`, or `2ca3:4115` in 4-track mode) with Mini 2S transmitters. Without one, Lavboard works as a mixer for your other inputs.
+You need macOS 15 or later. Wireless mic control needs a [supported mic system](#supported-mic-systems); without one, Lavboard works as a mixer for your other inputs.
 
 ## What it does
 
@@ -26,7 +26,19 @@ You need macOS 15 or later. For the wireless mics you need a DJI Mic Mini 2S rec
 - **Multitrack recording**: one WAV per track (recorded before mute and fader, so a cough-mute never loses material) plus a stereo mix. Optional backup recording on the transmitters themselves.
 - **Stream output** through a built-in virtual mic called "Lavboard" that Streamlabs, OBS or any other app can select.
 - **Venue output** to any wired output, with its own level and per-mic sends. It adds about 6 to 8 ms on top of the wireless link.
-- **Receiver settings**: mono, stereo or 4-track mode, noise cancellation and low cut.
+- **Receiver settings** such as channel mode, noise cancellation and low cut, for systems that have them.
+
+## Supported mic systems
+
+Each wireless mic system is supported by its own module, so adding another brand doesn't touch the rest of the app.
+
+| System | Module | What Lavboard controls |
+|---|---|---|
+| DJI Mic Mini 2S | [`Packages/DJIMicMini2S`](Packages/DJIMicMini2S) | Battery, hardware gain (-12 to +12 dB), mono, stereo or 4-track mode, noise cancellation, low cut, backup recording on the transmitters |
+
+The receiver is recognised by its USB ID (`2ca3:4015`, or `2ca3:4115` in 4-track mode). Any other wireless receiver that shows up as a USB audio input still works as an ordinary input, without per-transmitter controls.
+
+Want your system supported, such as a RØDE Wireless PRO or GO? A module can start out audio-only, just naming the transmitters' channels, and add controls once someone works out the receiver's protocol. See [Adding a mic system](CONTRIBUTING.md#adding-a-mic-system).
 
 ## Build from source
 
@@ -45,7 +57,7 @@ DEVELOPMENT_TEAM = YOURTEAMID
 CODE_SIGN_IDENTITY = Apple Development
 ```
 
-Run the tests with `xcodebuild -project Lavboard.xcodeproj -scheme Lavboard test`.
+Run the tests with `xcodebuild -project Lavboard.xcodeproj -scheme Lavboard test`, and each mic system module's own tests with `swift test --package-path Packages/<Module>`.
 
 ## First run
 
@@ -56,7 +68,8 @@ Run the tests with `xcodebuild -project Lavboard.xcodeproj -scheme Lavboard test
 
 ## How it works
 
-- **Control:** the receiver exposes a vendor USB interface (`com.dji.mic`, interface 4). Selecting alternate setting 1 opens two bulk endpoints that carry DJI's DUML protocol: status pushes for the receiver and each transmitter, and set-parameter commands. See `App/Device`.
+- **Mic systems:** each module conforms to `MicSystem` in [`Packages/MicSystemKit`](Packages/MicSystemKit): it recognises its receiver's audio device, says which channel carries each transmitter, and reports optional capabilities (gain, battery, modes, settings). The app draws every control from those capabilities.
+- **DJI control:** the receiver exposes a vendor USB interface (`com.dji.mic`, interface 4). Selecting alternate setting 1 opens two bulk endpoints that carry DJI's DUML protocol: status pushes for the receiver and each transmitter, and set-parameter commands. See `Packages/DJIMicMini2S`.
 - **Audio:** the app builds a private aggregate device from the inputs your tracks use and the outputs. The receiver (or the first input, without one) is the clock master and every other device is drift-compensated, so mixing happens in one small-buffer CoreAudio callback. Bluetooth mics and devices without 48 kHz (many webcams) run on their own clock instead: each is captured separately and converted to 48 kHz by a windowed-sinc resampler that follows its clock drift (`App/Audio/AsyncSource.c`). Their tracks run a little behind the others; the strip shows by how much. The mixer core is lock-free C (`App/Audio/AudioCore.c`).
 - **Recording:** the audio callback writes into a lock-free ring buffer that a background thread drains to disk.
 - **Stream device:** a virtual audio driver built from [BlackHole](https://github.com/ExistentialAudio/BlackHole), customised through `Driver/StreamDriverConfig.h` without editing its source.
@@ -65,7 +78,7 @@ Run the tests with `xcodebuild -project Lavboard.xcodeproj -scheme Lavboard test
 
 ## Contributing
 
-Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing with a receiver and the protocol safety rules. Please report security issues privately as described in [SECURITY.md](SECURITY.md).
+Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, adding a mic system, testing with a receiver and the protocol safety rules. Please report security issues privately as described in [SECURITY.md](SECURITY.md).
 
 ## Trademarks
 

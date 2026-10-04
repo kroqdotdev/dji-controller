@@ -124,8 +124,3 @@ struct DeviceIdentity: Equatable {
     var serial: String
     var name: String
 }
-
-extension Int {
-    /// Battery gauge 1 (full) ... 7 (empty) to a rough percentage.
-    var batteryPercent: Int { self >= 1 && self <= 7 ? (7 - self) * 100 / 6 : 0 }
-}

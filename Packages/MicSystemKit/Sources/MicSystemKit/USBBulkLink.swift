@@ -3,19 +3,40 @@ import IOKit
 import IOUSBHost
 import os
 
-/// Owns the receiver's `com.dji.mic` vendor interface (4): selects alt setting 1 and
-/// streams bytes from bulk 0x84 while accepting writes on bulk 0x04. Reconnects
-/// automatically when the receiver re-enumerates (e.g. after a channel mode change).
-final class USBLink {
-    static let vendorID = 0x2CA3
-    static let productIDs = [0x4015, 0x4115]
+/// Where a receiver's control channel lives: a vendor interface with one bulk endpoint each way.
+public struct USBBulkInterface: Sendable {
+    public var vendorID: Int
+    public var productIDs: [Int]
+    public var interfaceNumber: Int
+    public var configuration: Int
+    /// Selected after opening, when the endpoints only exist in an alternate setting.
+    public var alternateSetting: Int?
+    public var inEndpoint: UInt8
+    public var outEndpoint: UInt8
 
-    var onConnect: ((Int) -> Void)?
-    var onDisconnect: (() -> Void)?
-    var onBytes: (([UInt8]) -> Void)?
+    public init(vendorID: Int, productIDs: [Int], interfaceNumber: Int, configuration: Int = 1,
+                alternateSetting: Int? = nil, inEndpoint: UInt8, outEndpoint: UInt8) {
+        self.vendorID = vendorID
+        self.productIDs = productIDs
+        self.interfaceNumber = interfaceNumber
+        self.configuration = configuration
+        self.alternateSetting = alternateSetting
+        self.inEndpoint = inEndpoint
+        self.outEndpoint = outEndpoint
+    }
+}
 
-    private let log = Logger(subsystem: "com.sauerdev.lavboard", category: "usb")
-    private let queue = DispatchQueue(label: "com.sauerdev.lavboard.usb")
+/// Opens a USB vendor interface with IOUSBHost, streams bytes from its bulk IN endpoint and writes
+/// to its bulk OUT endpoint. Reconnects by itself when the device re-enumerates (some receivers
+/// restart after a mode change). Callbacks arrive on a private queue; hop to the main actor.
+public final class USBBulkLink: @unchecked Sendable {
+    public var onConnect: ((_ productID: Int) -> Void)?
+    public var onDisconnect: (() -> Void)?
+    public var onBytes: (([UInt8]) -> Void)?
+
+    private let spec: USBBulkInterface
+    private let log: Logger
+    private let queue: DispatchQueue
     private var port: IONotificationPortRef?
     private var addedIterator: io_iterator_t = 0
     private var removedIterator: io_iterator_t = 0
@@ -23,11 +44,18 @@ final class USBLink {
     private var pipeIn: IOUSBHostPipe?
     private var pipeOut: IOUSBHostPipe?
 
-    func start() {
+    /// `label` names the log category and queue, e.g. "dji-mic-mini-2s".
+    public init(_ spec: USBBulkInterface, label: String) {
+        self.spec = spec
+        log = Logger(subsystem: "com.sauerdev.lavboard", category: "usb.\(label)")
+        queue = DispatchQueue(label: "com.sauerdev.lavboard.usb.\(label)")
+    }
+
+    public func start() {
         queue.async { self.installNotifications() }
     }
 
-    func send(_ bytes: [UInt8]) {
+    public func send(_ bytes: [UInt8]) {
         queue.async {
             guard let pipe = self.pipeOut else { return }
             let data = NSMutableData(bytes: bytes, length: bytes.count)
@@ -46,10 +74,10 @@ final class USBLink {
 
     private func matchingDictionary() -> CFMutableDictionary {
         IOUSBHostInterface.__createMatchingDictionary(
-            withVendorID: NSNumber(value: Self.vendorID), productID: nil, bcdDevice: nil,
-            interfaceNumber: 4, configurationValue: 1, interfaceClass: nil, interfaceSubclass: nil,
-            interfaceProtocol: nil, speed: nil,
-            productIDArray: Self.productIDs.map { NSNumber(value: $0) }
+            withVendorID: NSNumber(value: spec.vendorID), productID: nil, bcdDevice: nil,
+            interfaceNumber: NSNumber(value: spec.interfaceNumber), configurationValue: NSNumber(value: spec.configuration),
+            interfaceClass: nil, interfaceSubclass: nil, interfaceProtocol: nil, speed: nil,
+            productIDArray: spec.productIDs.map { NSNumber(value: $0) }
         ).takeRetainedValue()
     }
 
@@ -59,10 +87,10 @@ final class USBLink {
         let refcon = Unmanaged.passUnretained(self).toOpaque()
 
         IOServiceAddMatchingNotification(port, kIOFirstMatchNotification, matchingDictionary(), { refcon, iterator in
-            Unmanaged<USBLink>.fromOpaque(refcon!).takeUnretainedValue().servicesAdded(iterator)
+            Unmanaged<USBBulkLink>.fromOpaque(refcon!).takeUnretainedValue().servicesAdded(iterator)
         }, refcon, &addedIterator)
         IOServiceAddMatchingNotification(port, kIOTerminatedNotification, matchingDictionary(), { refcon, iterator in
-            Unmanaged<USBLink>.fromOpaque(refcon!).takeUnretainedValue().servicesRemoved(iterator)
+            Unmanaged<USBBulkLink>.fromOpaque(refcon!).takeUnretainedValue().servicesRemoved(iterator)
         }, refcon, &removedIterator)
 
         servicesAdded(addedIterator)
@@ -95,9 +123,9 @@ final class USBLink {
     private func open(_ service: io_service_t, attempt: Int) {
         do {
             let iface = try IOUSBHostInterface(__ioService: service, options: [], queue: queue, interestHandler: nil)
-            try iface.selectAlternateSetting(1)
-            pipeIn = try iface.copyPipe(withAddress: 0x84)
-            pipeOut = try iface.copyPipe(withAddress: 0x04)
+            if let alternate = spec.alternateSetting { try iface.selectAlternateSetting(alternate) }
+            pipeIn = try iface.copyPipe(withAddress: Int(spec.inEndpoint))
+            pipeOut = try iface.copyPipe(withAddress: Int(spec.outEndpoint))
             interface = iface
             let productID = productID(of: service)
             IOObjectRelease(service)

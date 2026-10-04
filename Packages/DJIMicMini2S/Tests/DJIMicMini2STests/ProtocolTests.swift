@@ -1,5 +1,5 @@
 import Testing
-@testable import Lavboard
+@testable import DJIMicMini2S
 
 /// Frames below were captured from a DJI Mic Mini 2S receiver (firmware 30.00.03.00).
 struct ProtocolTests {

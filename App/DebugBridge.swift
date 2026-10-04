@@ -1,6 +1,7 @@
 #if DEBUG
 import AppKit
 import Foundation
+import MicSystemKit
 
 /// Debug builds only: accepts commands over a distributed notification so the app can be
 /// exercised end to end from a shell (see tools/lavctl.swift).
@@ -38,11 +39,13 @@ enum DebugBridge {
         let number = Int(parts.last ?? "") ?? 0
         switch verb {
         case "mode":
-            app.receiver.setMode(arg == "quad" ? .quad : (arg == "stereo" ? .stereo : .mono))
+            // mode <id>, e.g. "mode quad" for the DJI Mic Mini 2S
+            app.micSystems.first { $0.isConnected && $0.modes.contains { $0.id == arg } }?.setMode(arg)
         case "mute":
             app.toggleMute((Int(arg) ?? 1) - 1)
         case "gain":
-            app.receiver.setGain(slot: (Int(arg) ?? 1) - 1, dB: number)
+            // gain <TX 1...> <dB>, on the first system that has hardware gain
+            app.micSystems.first { $0.gain != nil }?.setGain(Double(number), slot: (Int(arg) ?? 1) - 1)
         case "fader":
             let i = (Int(arg) ?? 1) - 1
             if app.tracks.indices.contains(i) { app.tracks[i].faderDB = Double(number) }
@@ -55,9 +58,10 @@ enum DebugBridge {
             app.tracks[i].color = TapeColor(rawValue: parts[2]) ?? .white
             if parts.count > 3 { app.tracks[i].name = parts[3...].joined(separator: " ") }
         case "addtx":
-            // addtx <1-4>
+            // addtx <TX 1...> [system id], defaulting to the first registered system
             let slot = (Int(arg) ?? 1) - 1
-            app.addTrack(.transmitter(slot: slot), name: "TX\(slot + 1)")
+            let system = parts.count > 2 ? parts[2] : app.micSystems.first.map { type(of: $0).id } ?? TrackSource.legacySystemID
+            app.addTrack(.transmitter(system: system, slot: slot), name: "TX\(slot + 1)")
         case "adddevice":
             // adddevice <name or uid fragment> <channel 1...> [stereo]
             guard parts.count >= 3, let channel = Int(parts[2]), channel >= 1,
@@ -120,12 +124,18 @@ enum DebugBridge {
         case .waitingForInputs: engineState = "waiting"
         case .failed(let m): engineState = "failed: \(m)"
         }
+        // The first system keeps the flat fields older scripts read (tools/readme-screenshot.sh).
+        let first = app.micSystems.first
         let status: [String: Any] = [
-            "receiverConnected": app.receiver.connected,
-            "mode": app.receiver.mode?.label ?? "-",
-            "transmitters": app.receiver.transmitters.enumerated().map { i, tx in
-                ["slot": i + 1, "connected": tx?.status != nil, "gain": tx?.status?.gainDB ?? 0,
-                 "pendingGain": app.receiver.pendingGain[i] as Any, "battery": tx?.status?.batteryLevel ?? 0]
+            "receiverConnected": first?.isConnected ?? false,
+            "mode": first?.currentModeID ?? "-",
+            "transmitters": (first?.transmitters ?? []).enumerated().map { i, tx in
+                ["slot": i + 1, "connected": tx.connected, "gain": tx.gainDB ?? 0,
+                 "pendingGain": tx.pendingGainDB as Any, "battery": tx.battery ?? -1] as [String: Any]
+            },
+            "micSystems": app.micSystems.map { system in
+                ["id": type(of: system).id, "connected": system.isConnected, "receiverPresent": app.isReceiverPresent(system),
+                 "mode": system.currentModeID ?? "-", "notice": system.notice?.message ?? "-"] as [String: Any]
             },
             "engine": engineState,
             "engineWarning": app.engine.warning ?? "-",
