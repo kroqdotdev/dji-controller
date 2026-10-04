@@ -1,4 +1,4 @@
-name: DJIController
+name: Lavboard
 options:
   bundleIdPrefix: com.sauerdev
   deploymentTarget:
@@ -14,7 +14,7 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     GCC_C_LANGUAGE_STANDARD: gnu17
 targets:
-  DJIController:
+  Lavboard:
     type: application
     platform: macOS
     sources:
@@ -22,32 +22,36 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: DJI Controller
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        CFBundleDisplayName: Lavboard
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.music
         LSMinimumSystemVersion: "15.0"
-        NSMicrophoneUsageDescription: DJI Controller captures the four DJI transmitter channels to meter, mix and record them.
+        NSMicrophoneUsageDescription: Lavboard captures the four DJI transmitter channels to meter, mix and record them.
     entitlements:
-      path: App/DJIController.entitlements
+      path: App/Lavboard.entitlements
       properties:
         com.apple.security.device.audio-input: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.sauerdev.djicontroller
-        PRODUCT_NAME: DJIController
+        PRODUCT_BUNDLE_IDENTIFIER: com.sauerdev.lavboard
+        PRODUCT_NAME: Lavboard
+        PRODUCT_MODULE_NAME: Lavboard
+        # Release version; scripts/release.sh overrides it per release.
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
         SWIFT_OBJC_BRIDGING_HEADER: App/Audio/AudioCore-Bridging.h
         # Hardened runtime blocks code injection, so nothing can borrow the app's microphone permission.
         ENABLE_HARDENED_RUNTIME: YES
         GCC_OPTIMIZATION_LEVEL: 3
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
-      - target: DJIControllerStream
+      - target: LavboardStream
         embed: true
         codeSign: false
         copy:
           destination: resources
-  DJIControllerStream:
+  LavboardStream:
     type: bundle
     platform: macOS
     sources:
@@ -58,7 +62,7 @@ targets:
       path: Driver/Info.plist
       properties:
         CFBundleDevelopmentRegion: English
-        CFBundleName: DJIControllerStream
+        CFBundleName: LavboardStream
         CFBundleShortVersionString: "0.7.1"
         CFBundleVersion: "1"
         CFPlugInFactories:
@@ -71,8 +75,8 @@ targets:
       - sdk: Accelerate.framework
     settings:
       base:
-        PRODUCT_NAME: DJIControllerStream
-        PRODUCT_BUNDLE_IDENTIFIER: com.sauerdev.djicontroller.stream
+        PRODUCT_NAME: LavboardStream
+        PRODUCT_BUNDLE_IDENTIFIER: com.sauerdev.lavboard.stream
         WRAPPER_EXTENSION: driver
         INSTALL_PATH: /Library/Audio/Plug-Ins/HAL
         SKIP_INSTALL: YES
@@ -80,24 +84,24 @@ targets:
         GCC_OPTIMIZATION_LEVEL: s
         OTHER_CFLAGS: ["-include", "$(SRCROOT)/Driver/StreamDriverConfig.h"]
         GCC_WARN_INHIBIT_ALL_WARNINGS: YES
-  DJIControllerTests:
+  LavboardTests:
     type: bundle.unit-test
     platform: macOS
     sources:
       - path: Tests
     dependencies:
-      - target: DJIController
+      - target: Lavboard
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.sauerdev.djicontroller.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.sauerdev.lavboard.tests
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_OBJC_BRIDGING_HEADER: App/Audio/AudioCore-Bridging.h
 schemes:
-  DJIController:
+  Lavboard:
     build:
       targets:
-        DJIController: all
-        DJIControllerTests: [test]
+        Lavboard: all
+        LavboardTests: [test]
     test:
       targets:
-        - DJIControllerTests
+        - LavboardTests

@@ -1,12 +1,16 @@
 <img src="assets/icon.svg" width="96" height="96" alt="">
 
-# DJI Controller
+# Lavboard
 
-A native macOS mixer for the DJI Mic Mini 2S. Plug the receiver into your Mac and control every transmitter from one window: gain, mute, levels, names, recording, and separate feeds for your stream and the venue's PA.
+A native macOS mixer for wireless lav mics, made for the DJI Mic Mini 2S. Plug the receiver into your Mac and control every transmitter from one window: gain, mute, levels, names, recording, and separate feeds for your stream and the venue's PA.
 
 Built for running live event streams and podcasts with up to four wireless mics.
 
-> Not affiliated with or endorsed by DJI. It talks to the receiver over the same USB channel the DJI Mimo app uses through the phone adapter.
+## Download
+
+Get **Lavboard** from the [latest release](https://github.com/kroqdotdev/lavboard/releases/latest): download the `.dmg`, open it and drag Lavboard into Applications. It is signed and notarized by Apple, so it opens like any other app.
+
+You need macOS 15 or later and a DJI Mic Mini 2S receiver (USB ID `2ca3:4015`, or `2ca3:4115` in 4-track mode) with Mini 2S transmitters.
 
 ## What it does
 
@@ -15,22 +19,18 @@ Built for running live event streams and podcasts with up to four wireless mics.
 - **Hardware gain** on each transmitter (-12 to +12 dB), confirmed by the receiver.
 - **Names and tape colours** per mic, so you know who is wearing which one.
 - **4-track recording**: one WAV per mic (recorded before mute and fader, so a cough-mute never loses material) plus a stereo mix. Optional backup recording on the transmitters themselves.
-- **Stream output** through a built-in virtual mic called "DJI Controller" that Streamlabs, OBS or any other app can select.
+- **Stream output** through a built-in virtual mic called "Lavboard" that Streamlabs, OBS or any other app can select.
 - **Venue output** to any wired output, with its own level and per-mic sends. It adds about 6 to 8 ms on top of the wireless link.
 - **Receiver settings**: mono, stereo or 4-track mode, noise cancellation and low cut.
 
-## Requirements
+## Build from source
 
-- macOS 15 or later
-- Xcode 16 or later and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
-- A DJI Mic Mini 2S receiver (USB ID `2ca3:4015`, or `2ca3:4115` in 4-track mode) with Mini 2S transmitters
-
-## Build and run
+You need Xcode 16 or later and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
 
 ```sh
 xcodegen generate
-xcodebuild -project DJIController.xcodeproj -scheme DJIController -configuration Release -derivedDataPath build build
-open build/Build/Products/Release/DJIController.app
+xcodebuild -project Lavboard.xcodeproj -scheme Lavboard -configuration Release -derivedDataPath build build
+open build/Build/Products/Release/Lavboard.app
 ```
 
 Builds are ad-hoc signed by default. To sign with your own Apple Development identity, which keeps the microphone permission across rebuilds, create `Config/Local.xcconfig`:
@@ -40,13 +40,13 @@ DEVELOPMENT_TEAM = YOURTEAMID
 CODE_SIGN_IDENTITY = Apple Development
 ```
 
-Run the tests with `xcodebuild -project DJIController.xcodeproj -scheme DJIController test`.
+Run the tests with `xcodebuild -project Lavboard.xcodeproj -scheme Lavboard test`.
 
 ## First run
 
 1. Allow microphone access when macOS asks. The app needs it to read the receiver's audio.
 2. Switch the receiver to **4-track** (the banner offers it). Each mic then arrives on its own channel. The receiver restarts for a few seconds.
-3. On the **Stream** strip, click **Set up** to install the virtual mic. macOS asks for your password once, because audio drivers live in `/Library/Audio/Plug-Ins/HAL`. Then pick **DJI Controller** as the mic in your streaming app.
+3. On the **Stream** strip, click **Set up** to install the virtual mic. macOS asks for your password once, because audio drivers live in `/Library/Audio/Plug-Ins/HAL`. Then pick **Lavboard** as the mic in your streaming app.
 4. Pick a wired output on the **Venue** strip if you feed a PA.
 
 ## How it works
@@ -56,11 +56,15 @@ Run the tests with `xcodebuild -project DJIController.xcodeproj -scheme DJIContr
 - **Recording:** the audio callback writes into a lock-free ring buffer that a background thread drains to disk.
 - **Stream device:** a virtual audio driver built from [BlackHole](https://github.com/ExistentialAudio/BlackHole), customised through `Driver/StreamDriverConfig.h` without editing its source.
 
-`tools/` holds the Python and Swift scripts used to reverse-engineer the receiver, plus `djictl`, which drives a debug build from the shell.
+`tools/` holds the Python and Swift scripts used to reverse-engineer the receiver, plus `lavctl`, which drives a debug build from the shell.
 
 ## Contributing
 
 Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing with a receiver and the protocol safety rules. Please report security issues privately as described in [SECURITY.md](SECURITY.md).
+
+## Trademarks
+
+DJI, DJI Mic and DJI Mimo are trademarks of SZ DJI Technology Co., Ltd. Lavboard is an independent project, not affiliated with or endorsed by DJI. It talks to the receiver over the same USB channel the DJI Mimo app uses through the phone adapter.
 
 ## Credits
 
@@ -70,6 +74,6 @@ Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md
 
 ## License
 
-DJI Controller is free software, licensed under the [GNU General Public License v3.0](LICENSE). Copyright (C) 2026 the DJI Controller authors.
+Lavboard is free software, licensed under the [GNU General Public License v3.0](LICENSE). Copyright (C) 2026 the Lavboard authors.
 
 The GPL is what allows the app to bundle BlackHole: BlackHole may be used in apps that are themselves GPL-3.0. A version under any other license would need a commercial license from [Existential Audio](https://existential.audio) or a different virtual audio driver.

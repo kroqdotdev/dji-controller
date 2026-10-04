@@ -1,8 +1,9 @@
 .venv/
 __pycache__/
 build/
-DJIController.xcodeproj/
+Lavboard.xcodeproj/
 App/Info.plist
 Driver/Info.plist
 Config/Local.xcconfig
-App/DJIController.entitlements
+App/Lavboard.entitlements
+dist/

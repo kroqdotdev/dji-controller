@@ -34,8 +34,8 @@ jobs:
       - name: Test
         run: >
           xcodebuild test
-          -project DJIController.xcodeproj
-          -scheme DJIController
+          -project Lavboard.xcodeproj
+          -scheme Lavboard
           -destination 'platform=macOS'
           -derivedDataPath build
           ENABLE_HARDENED_RUNTIME=NO
@@ -43,7 +43,7 @@ jobs:
       - name: Build Release
         run: >
           xcodebuild build
-          -project DJIController.xcodeproj
-          -scheme DJIController
+          -project Lavboard.xcodeproj
+          -scheme Lavboard
           -configuration Release
           -derivedDataPath build

@@ -14,8 +14,8 @@ final class USBLink {
     var onDisconnect: (() -> Void)?
     var onBytes: (([UInt8]) -> Void)?
 
-    private let log = Logger(subsystem: "com.sauerdev.djicontroller", category: "usb")
-    private let queue = DispatchQueue(label: "com.sauerdev.djicontroller.usb")
+    private let log = Logger(subsystem: "com.sauerdev.lavboard", category: "usb")
+    private let queue = DispatchQueue(label: "com.sauerdev.lavboard.usb")
     private var port: IONotificationPortRef?
     private var addedIterator: io_iterator_t = 0
     private var removedIterator: io_iterator_t = 0

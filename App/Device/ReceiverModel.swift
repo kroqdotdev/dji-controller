@@ -24,7 +24,7 @@ final class ReceiverModel {
     var mode: ChannelMode? { status?.mode }
     var connectedCount: Int { transmitters.compactMap { $0?.status }.count }
 
-    private let log = Logger(subsystem: "com.sauerdev.djicontroller", category: "receiver")
+    private let log = Logger(subsystem: "com.sauerdev.lavboard", category: "receiver")
     private let link = USBLink()
     private var parser = DUMLParser()
     private var seq: UInt16 = 0x4000
