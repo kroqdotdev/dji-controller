@@ -188,7 +188,7 @@ extension UpdateController: SPUUserDriver {
 
 extension UpdateController: SPUUpdaterDelegate {
     #if DEBUG
-    /// Debug builds can point at a local test feed: defaults write com.sauerdev.lavboard LavboardTestFeedURL <url>
+    /// Debug builds can point at a local test feed: defaults write com.sauerdev.lavboard.debug LavboardTestFeedURL <url>
     nonisolated func feedURLString(for updater: SPUUpdater) -> String? {
         UserDefaults.standard.string(forKey: "LavboardTestFeedURL")
     }

@@ -21,7 +21,7 @@ enum MicSystems {
 /// A pretend two-transmitter system for working on the interface without wireless hardware. Its
 /// "receiver" is the Mac's built-in microphone, which carries TX1; TX2 has no channel of its own.
 /// Every capability is simulated, so all the controls appear. Turn it on with
-/// `defaults write com.sauerdev.lavboard FakeMicSystem -bool true` and relaunch a debug build.
+/// `defaults write com.sauerdev.lavboard.debug FakeMicSystem -bool true` and relaunch a debug build.
 @Observable @MainActor
 final class FakeMicSystem: MicSystem {
     static let id = "fake"

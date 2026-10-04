@@ -68,6 +68,7 @@ final class AudioEngine {
 
     private let log = Logger(subsystem: "com.sauerdev.lavboard", category: "engine")
     private let session = EngineSession()
+    private var started = false
     private var signature = ""
     /// Each build gets a number; only the latest one's result is applied.
     private var buildGeneration = 0
@@ -95,7 +96,11 @@ final class AudioEngine {
         bufferFrames = frames > 0 ? UInt32(frames) : 64
     }
 
+    /// Starts building the engine. Nothing touches an audio device before this, so the app can ask
+    /// for microphone access first.
     func start() {
+        guard !started else { return }
+        started = true
         installListeners()
         scheduleRebuild(force: true)
     }
@@ -174,6 +179,7 @@ final class AudioEngine {
     // MARK: Rebuild
 
     private func scheduleRebuild(force: Bool, after delay: Duration? = nil) {
+        guard started else { return } // `start` builds with whatever has been set by then
         layoutPending = true
         rebuildTask?.cancel()
         rebuildTask = Task { @MainActor in

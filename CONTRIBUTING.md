@@ -78,11 +78,13 @@ Modules are compiled into the app and reviewed as pull requests. Lavboard delibe
 Debug builds include a fake two-transmitter system that uses the Mac's built-in microphone as its "receiver". Every capability is simulated, which is handy for interface work:
 
 ```sh
-defaults write com.sauerdev.lavboard FakeMicSystem -bool true    # then relaunch a debug build
-defaults delete com.sauerdev.lavboard FakeMicSystem               # turn it off again
+defaults write com.sauerdev.lavboard.debug FakeMicSystem -bool true    # then relaunch a debug build
+defaults delete com.sauerdev.lavboard.debug FakeMicSystem               # turn it off again
 ```
 
 ## Testing with a receiver
+
+Debug builds run as `com.sauerdev.lavboard.debug`, with their own settings and microphone permission, so they can sit next to an installed copy of Lavboard without touching it. Their settings live in that domain (`defaults read com.sauerdev.lavboard.debug`).
 
 Most real-world behaviour needs a supported receiver plugged in. Debug builds include a command bridge, so you can exercise the app from a shell:
 
@@ -145,10 +147,10 @@ Debug builds read a test feed from `LavboardTestFeedURL`. Build a newer version 
 ```sh
 build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast --download-url-prefix http://127.0.0.1:8765/ feed/
 python3 -m http.server 8765 --bind 127.0.0.1 --directory feed
-defaults write com.sauerdev.lavboard LavboardTestFeedURL http://127.0.0.1:8765/appcast.xml
+defaults write com.sauerdev.lavboard.debug LavboardTestFeedURL http://127.0.0.1:8765/appcast.xml
 ```
 
-Launch an older debug build: the update button appears within a few seconds. Remove the test feed afterwards with `defaults delete com.sauerdev.lavboard LavboardTestFeedURL`.
+Launch an older debug build: the update button appears within a few seconds. Remove the test feed afterwards with `defaults delete com.sauerdev.lavboard.debug LavboardTestFeedURL`.
 
 ## License
 

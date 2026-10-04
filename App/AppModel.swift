@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import MicSystemKit
 import Observation
@@ -89,7 +90,7 @@ final class AppModel {
         save()
         engine.setStreamLevel(dB: streamLevelDB)
         engine.setVenueLevel(dB: venueLevelDB)
-        engine.start()
+        startAudioWhenAllowed()
         for system in micSystems { system.start() }
         watchMicSystemModes()
         updates.shouldDeferRestart = { [weak self] in self?.recorder.isRecording ?? false }
@@ -157,6 +158,39 @@ final class AppModel {
         micSystems.filter { system in
             let id = type(of: system).id
             return system.isConnected || engine.receivers[id] != nil || tracks.contains { $0.source.transmitter?.system == id }
+        }
+    }
+
+    enum MicAccess { case unknown, asking, granted, denied }
+    /// Whether macOS lets Lavboard hear microphones.
+    private(set) var micAccess: MicAccess = .unknown
+
+    /// Asks for microphone access before starting audio. While macOS shows that question, every
+    /// microphone start on the Mac waits for the answer (for up to a minute), so starting the
+    /// engine first would leave it hanging behind the dialog. Without access the engine still
+    /// runs, but every input is silent.
+    private func startAudioWhenAllowed() {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            micAccess = .granted
+            engine.start()
+        case .notDetermined:
+            micAccess = .asking
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                Task { @MainActor in
+                    self.micAccess = granted ? .granted : .denied
+                    self.engine.start()
+                }
+            }
+        default:
+            micAccess = .denied
+            engine.start()
+        }
+    }
+
+    func openMicrophoneSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
         }
     }
 
