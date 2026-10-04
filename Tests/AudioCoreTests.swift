@@ -198,4 +198,34 @@ struct AudioCoreTests {
         #expect(AudioCoreTrackCount(h.core) == 8)
         #expect(AudioCoreRingChannels(h.core) == 10)
     }
+
+    @Test func settingsFollowTracksThroughALayoutChange() {
+        let a = UUID(), b = UUID()
+        let h = CoreHarness(tracks: [CoreHarness.mono(0, 0), CoreHarness.mono(0, 1)]) // A plays 0.1, B plays 0.2
+        let controls = TrackControls(core: h.core)
+        let live = TrackControls.Settings(gainDB: 0, muted: false, venueSend: true, balance: 0)
+        var muted = live
+        muted.muted = true
+        controls.install([a, b])
+        controls.update([a: muted, b: live])
+        h.cycle()
+        #expect(all(h.cycle().stream, left: 0.2, right: 0.2))
+
+        // The app moves A after B. Until the engine installs the new layout, A's source is still
+        // at position 0, so its mute must stay there.
+        controls.update([b: live, a: muted])
+        h.cycle()
+        #expect(all(h.cycle().stream, left: 0.2, right: 0.2))
+
+        let swapped = [CoreHarness.mono(0, 1), CoreHarness.mono(0, 0)]
+        swapped.withUnsafeBufferPointer { AudioCoreSetLayout(h.core, $0.baseAddress, 2, 0, 1) }
+        controls.install([b, a])
+        h.cycle()
+        #expect(all(h.cycle().stream, left: 0.2, right: 0.2))
+
+        // A is removed: until the next layout it stays in the core, silent.
+        controls.update([b: live])
+        h.cycle()
+        #expect(all(h.cycle().stream, left: 0.2, right: 0.2))
+    }
 }
