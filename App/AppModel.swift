@@ -38,6 +38,7 @@ final class AppModel {
     let engine = AudioEngine()
     let recorder = Recorder()
     let streamDevice = StreamDevice()
+    let updates = UpdateController()
     @ObservationIgnored let meters = MeterBallistics()
 
     var strips: [StripSettings] {
@@ -74,6 +75,7 @@ final class AppModel {
         engine.setVenueLevel(dB: venueLevelDB)
         engine.start()
         receiver.start()
+        updates.start()
         streamDevice.onInstalled = { [weak self] in
             guard let self else { return }
             // Route the stream mix to the new device unless another output is already in use.

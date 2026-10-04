@@ -4,6 +4,10 @@ options:
   deploymentTarget:
     macOS: "15.0"
   createIntermediateGroups: true
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.10.0
 configFiles:
   Debug: Config/Signing.xcconfig
   Release: Config/Signing.xcconfig
@@ -28,6 +32,14 @@ targets:
         LSApplicationCategoryType: public.app-category.music
         LSMinimumSystemVersion: "15.0"
         NSMicrophoneUsageDescription: Lavboard captures the four DJI transmitter channels to meter, mix and record them.
+        # Updates (Sparkle): the feed is always the newest published release's appcast.xml.
+        SUFeedURL: https://github.com/kroqdotdev/lavboard/releases/latest/download/appcast.xml
+        SUPublicEDKey: MubnxR8CJ6FdaPkJdjQTL4zoIS4fZvJYqfdBhSW9xT8=
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
+        SUAutomaticallyUpdate: false
+        SUAllowsAutomaticUpdates: false
+        SUVerifyUpdateBeforeExtraction: true
     entitlements:
       path: App/Lavboard.entitlements
       properties:
@@ -39,13 +51,14 @@ targets:
         PRODUCT_MODULE_NAME: Lavboard
         # Release version; scripts/release.sh overrides it per release.
         MARKETING_VERSION: 0.1.0
-        CURRENT_PROJECT_VERSION: 1
+        CURRENT_PROJECT_VERSION: $(MARKETING_VERSION)
         SWIFT_OBJC_BRIDGING_HEADER: App/Audio/AudioCore-Bridging.h
         # Hardened runtime blocks code injection, so nothing can borrow the app's microphone permission.
         ENABLE_HARDENED_RUNTIME: YES
         GCC_OPTIMIZATION_LEVEL: 3
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
+      - package: Sparkle
       - target: LavboardStream
         embed: true
         codeSign: false

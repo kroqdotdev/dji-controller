@@ -13,6 +13,11 @@ struct LavboardApp: App {
         }
         .windowToolbarStyle(.unified)
         .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { app.updates.checkNow() }
+            }
+        }
     }
 }
 

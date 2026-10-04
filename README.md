@@ -10,6 +10,8 @@ Built for running live event streams and podcasts with up to four wireless mics.
 
 Get **Lavboard** from the [latest release](https://github.com/kroqdotdev/lavboard/releases/latest): download the `.dmg`, open it and drag Lavboard into Applications. It is signed and notarized by Apple, so it opens like any other app.
 
+Lavboard checks for updates every time it starts. When a new version is out, an **Update** button appears in the toolbar: one click downloads it, installs it and restarts the app. You can also choose **Check for Updates…** from the Lavboard menu. (Version 0.1.0 predates the updater, so install 0.1.1 or later once by hand.)
+
 You need macOS 15 or later and a DJI Mic Mini 2S receiver (USB ID `2ca3:4015`, or `2ca3:4115` in 4-track mode) with Mini 2S transmitters.
 
 ## What it does
@@ -70,6 +72,7 @@ DJI, DJI Mic and DJI Mimo are trademarks of SZ DJI Technology Co., Ltd. Lavboard
 
 - [usokawa/dji-mic-mo](https://github.com/usokawa/dji-mic-mo) documented the Mic Mini parameter IDs and status offsets this app builds on.
 - [ShadowBitBasher/DJI-Mic-Control](https://github.com/ShadowBitBasher/DJI-Mic-Control) documented the protocol for earlier receivers.
+- [Sparkle](https://sparkle-project.org) (MIT) handles in-app updates.
 - [BlackHole](https://github.com/ExistentialAudio/BlackHole) by Existential Audio powers the stream device. It is GPL-3.0 licensed; the vendored copy and its license are in `Vendor/BlackHole`.
 
 ## License
