@@ -174,7 +174,7 @@ private struct SourcePicker: View {
                         group("DJI receiver", choices.transmitters)
                     }
                     ForEach(choices.devices, id: \.uid) { device in
-                        group(device.name, device.options)
+                        group(device.name, device.options, note: device.note)
                     }
                     if choices.transmitters.isEmpty && choices.devices.isEmpty {
                         Text("Plug in a mic, an audio interface or the DJI receiver to add it here.")
@@ -192,12 +192,19 @@ private struct SourcePicker: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func group(_ title: String, _ options: [SourceChoice]) -> some View {
+    private func group(_ title: String, _ options: [SourceChoice], note: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+            if let note {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 2)
+            }
             ForEach(options, id: \.source) { choice in
                 Button {
                     app.addTrack(choice.source, name: choice.defaultName)
@@ -261,9 +268,15 @@ struct TrackStrip: View {
                         .foregroundStyle(Console.engraving)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .help(sourceHelp(track) ?? "")
                     Spacer(minLength: 2)
                     if let slot = track.source.transmitterSlot {
                         BatteryView(status: app.receiver.transmitters[slot]?.status)
+                    } else if let ms = latency(i), !isBluetooth(track) {
+                        Text("+\(Int(ms.rounded())) ms")
+                            .font(.stripLabel.monospacedDigit())
+                            .foregroundStyle(Console.engraving)
+                            .help("Runs about \(Int(ms.rounded())) ms behind the other inputs: this device has its own clock, so its audio is converted to 48 kHz.")
                     }
                 }
                 .frame(height: 18)
@@ -333,8 +346,25 @@ struct TrackStrip: View {
     private func sourceCaption(_ track: Track) -> String {
         switch track.source {
         case .transmitter: track.source.channelLabel
-        case .device(_, let name, _, _): compact ? track.source.channelLabel : "\(name), \(track.source.channelLabel)"
+        case .device(_, let name, _, _):
+            if isBluetooth(track) {
+                "Bluetooth"
+            } else {
+                compact ? track.source.channelLabel : "\(Track.shortDeviceName(name)), \(track.source.channelLabel)"
+            }
         }
+    }
+
+    private func sourceHelp(_ track: Track) -> String? {
+        isBluetooth(track) ? "Bluetooth mics run behind the other inputs, often by 100 ms or more. Keep them off the venue output." : nil
+    }
+
+    private func isBluetooth(_ track: Track) -> Bool {
+        app.engine.device(for: track.source)?.isBluetooth ?? false
+    }
+
+    private func latency(_ index: Int) -> Double? {
+        app.engine.trackLatencyMs.indices.contains(index) ? app.engine.trackLatencyMs[index] : nil
     }
 
     private func missingMessage(_ track: Track) -> String {

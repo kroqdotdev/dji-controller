@@ -23,8 +23,8 @@ struct SourceChoice {
 
 struct SourceChoices {
     var transmitters: [SourceChoice]
-    /// Keyed by UID: two identical USB mics share a name.
-    var devices: [(uid: String, name: String, options: [SourceChoice])]
+    /// Keyed by UID: two identical USB mics share a name. `note` explains a device on its own clock.
+    var devices: [(uid: String, name: String, note: String?, options: [SourceChoice])]
 }
 
 @Observable @MainActor
@@ -76,6 +76,9 @@ final class AppModel {
         streamLevelDB = defaults.object(forKey: "streamLevelDB") as? Double ?? 0
         venueLevelDB = defaults.object(forKey: "venueLevelDB") as? Double ?? 0
         backupOnTransmitters = defaults.bool(forKey: "backupOnTransmitters")
+        // Unit tests run inside the app: keep the test host off the audio devices, the receiver and
+        // the saved settings.
+        guard !Self.isTestHost else { return }
 
         engine.trackSources = tracks.map(\.source)
         pushToEngine()
@@ -116,6 +119,9 @@ final class AppModel {
         DebugBridge.install(self)
         #endif
     }
+
+    static let isTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        || ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] != nil
 
     /// Builds from before the rename to Lavboard saved settings under the old bundle identifier.
     /// Copies them once, on the first launch that finds no Lavboard settings yet.
@@ -163,7 +169,9 @@ final class AppModel {
 
     func addTrack(_ source: TrackSource, name: String) {
         guard canAddTrack else { return }
-        tracks.append(Track(name: name, source: source))
+        // A Bluetooth mic lags far behind the room, so it stays off the venue PA unless asked.
+        let bluetooth = engine.device(for: source)?.isBluetooth ?? false
+        tracks.append(Track(name: name, sendToVenue: !bluetooth, source: source))
     }
 
     func removeTrack(_ id: UUID) {
@@ -189,24 +197,41 @@ final class AppModel {
                                     note: receiver.transmitters[slot]?.status == nil ? "Off" : nil)
             }
         }
-        let devices = engine.inputs.filter(\.canJoinEngine).map { device -> (uid: String, name: String, options: [SourceChoice]) in
+        let devices = engine.inputs.filter { $0.usableInputChannels > 0 }
+            .map { device -> (uid: String, name: String, note: String?, options: [SourceChoice]) in
+            let channels = device.usableInputChannels
             func choice(_ channel: Int, stereo: Bool, title: String) -> SourceChoice {
                 let source = TrackSource.device(uid: device.uid, name: device.name, channel: channel, stereo: stereo)
-                let name = Track.defaultName(deviceName: device.name, channel: channel, stereo: stereo, deviceChannels: device.inputChannels)
+                let name = Track.defaultName(deviceName: device.name, channel: channel, stereo: stereo, deviceChannels: channels)
                 return SourceChoice(source: source, title: title, defaultName: name, inUse: used.contains(source.identity))
             }
             var options: [SourceChoice] = []
-            if device.inputChannels == 1 {
+            if channels == 1 {
                 options.append(choice(0, stereo: false, title: "Mono input"))
             } else {
-                for c in 0..<device.inputChannels { options.append(choice(c, stereo: false, title: "Input \(c + 1)")) }
-                for c in stride(from: 0, to: device.inputChannels - 1, by: 2) {
+                for c in 0..<channels { options.append(choice(c, stereo: false, title: "Input \(c + 1)")) }
+                for c in stride(from: 0, to: channels - 1, by: 2) {
                     options.append(choice(c, stereo: true, title: "Inputs \(c + 1) and \(c + 2), stereo"))
                 }
             }
-            return (device.uid, device.name, options)
+            return (device.uid, device.name, Self.ownClockNote(device), options)
         }
         return SourceChoices(transmitters: transmitters, devices: devices)
+    }
+
+    /// What to expect from a device that can't run on the engine's 48 kHz clock.
+    static func ownClockNote(_ device: AudioDeviceInfo) -> String? {
+        if device.isBluetooth {
+            return "Bluetooth runs behind the other inputs, and a headset switches to call quality while its mic is in use."
+        }
+        guard device.runsOnOwnClock else { return nil }
+        let rate = CoreAudioHAL.preferredRate(among: CoreAudioHAL.availableRates(device.id)) ?? device.nominalRate
+        return "Converted from \(Self.kilohertz(rate)), slightly behind the other inputs."
+    }
+
+    static func kilohertz(_ rate: Double) -> String {
+        let khz = rate / 1000
+        return khz == khz.rounded() ? "\(Int(khz)) kHz" : String(format: "%.1f kHz", khz)
     }
 
     func sourceDescription(_ source: TrackSource) -> String {
