@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      # CI builds are ad-hoc signed; hardened runtime is skipped so the test bundle can load
+      # into the ad-hoc signed host app.
+      - name: Test
+        run: >
+          xcodebuild test
+          -project DJIController.xcodeproj
+          -scheme DJIController
+          -destination 'platform=macOS'
+          -derivedDataPath build
+          ENABLE_HARDENED_RUNTIME=NO
+
+      - name: Build Release
+        run: >
+          xcodebuild build
+          -project DJIController.xcodeproj
+          -scheme DJIController
+          -configuration Release
+          -derivedDataPath build

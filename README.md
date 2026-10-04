@@ -58,6 +58,10 @@ Run the tests with `xcodebuild -project DJIController.xcodeproj -scheme DJIContr
 
 `tools/` holds the Python and Swift scripts used to reverse-engineer the receiver, plus `djictl`, which drives a debug build from the shell.
 
+## Contributing
+
+Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing with a receiver and the protocol safety rules. Please report security issues privately as described in [SECURITY.md](SECURITY.md).
+
 ## Credits
 
 - [usokawa/dji-mic-mo](https://github.com/usokawa/dji-mic-mo) documented the Mic Mini parameter IDs and status offsets this app builds on.
