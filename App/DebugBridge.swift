@@ -19,6 +19,8 @@ enum DebugBridge {
         let parts = command.split(separator: " ").map(String.init)
         guard let verb = parts.first else { return }
         let arg = parts.count > 1 ? parts[1] : ""
+        // Everything after the command word, so file paths may contain spaces.
+        let rest = String(command.dropFirst(verb.count)).trimmingCharacters(in: .whitespaces)
         let number = Int(parts.last ?? "") ?? 0
         switch verb {
         case "mode":
@@ -40,11 +42,11 @@ enum DebugBridge {
         case "record":
             app.toggleRecording()
         case "snapshot":
-            AppDelegate.snapshot(to: arg)
+            AppDelegate.snapshot(to: rest)
         case "capture":
-            captureWindow(to: arg)
+            captureWindow(to: rest)
         case "status":
-            writeStatus(app, to: arg)
+            writeStatus(app, to: rest)
         default:
             break
         }

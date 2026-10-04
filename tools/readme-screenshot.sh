@@ -8,6 +8,9 @@ cd "$(dirname "$0")/.."
 DOMAIN=com.sauerdev.lavboard
 VERSION=$(sed -n 's/^ *MARKETING_VERSION: *//p' project.yml | head -1)
 OUT="$PWD/docs/screenshot.png"
+# Captured into a fresh folder first, so a failed capture can never pass for the committed image.
+SHOT_DIR=$(mktemp -d "/tmp/lavboard screenshot.XXXXXX")
+SHOT="$SHOT_DIR/screenshot.png"
 
 xcodegen generate --quiet
 xcodebuild -project Lavboard.xcodeproj -scheme Lavboard -configuration Debug -derivedDataPath build \
@@ -21,6 +24,7 @@ restore() {
     sleep 1
     defaults import "$DOMAIN" "$BACKUP"
     rm -f "$BACKUP"
+    rm -rf "$SHOT_DIR"
     [ -d /Applications/Lavboard.app ] && open /Applications/Lavboard.app
 }
 trap restore EXIT
@@ -48,8 +52,9 @@ done
 sleep 1
 say -v Samantha "Welcome back to the show. Tonight we are talking about live sound for small venues." &
 sleep 2.2
-/tmp/lavctl "capture $OUT"
+/tmp/lavctl "capture $SHOT"
 sleep 1.5
 wait
-[ -f "$OUT" ] || { echo "error: capture failed" >&2; exit 1; }
+[ -s "$SHOT" ] || { echo "error: capture failed" >&2; exit 1; }
+sips --resampleWidth 1760 "$SHOT" --out "$OUT" >/dev/null
 echo "Saved $OUT"
