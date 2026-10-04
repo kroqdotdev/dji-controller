@@ -66,6 +66,10 @@ enum DebugBridge {
             let stereo = parts.count > 3 && parts[3] == "stereo"
             app.addTrack(.device(uid: device.uid, name: device.name, channel: channel - 1, stereo: stereo),
                          name: Track.defaultName(deviceName: device.name, channel: channel - 1, stereo: stereo, deviceChannels: device.inputChannels))
+        case "movetrack" where parts.count >= 3:
+            // movetrack <track 1...> <offset>
+            let i = (Int(arg) ?? 1) - 1
+            if app.tracks.indices.contains(i), let offset = Int(parts[2]) { app.moveTrack(app.tracks[i].id, by: offset) }
         case "removetrack":
             let i = (Int(arg) ?? 1) - 1
             if app.tracks.indices.contains(i) { app.removeTrack(app.tracks[i].id) }

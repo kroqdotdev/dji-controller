@@ -179,6 +179,12 @@ final class AppModel {
         tracks.removeAll { $0.id == id }
     }
 
+    /// Moves a track one place left (-1) or right (+1). Its mute key and file number follow its place.
+    func moveTrack(_ id: UUID, by offset: Int) {
+        guard canEditTracks, let i = tracks.firstIndex(where: { $0.id == id }), tracks.indices.contains(i + offset) else { return }
+        tracks.swapAt(i, i + offset)
+    }
+
     func setSource(_ source: TrackSource, for id: UUID) {
         guard canEditTracks, let i = tracks.firstIndex(where: { $0.id == id }) else { return }
         tracks[i].source = source
