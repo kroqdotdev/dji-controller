@@ -75,6 +75,8 @@ final class AudioEngine {
     /// Own-clock USB devices already moved to their preferred rate; each is only asked once, so a
     /// rate the user picks later in Audio MIDI Setup sticks.
     private var rateRequested: Set<String> = []
+    /// The rate each running own-clock capture was built for, by device UID.
+    private var ownClockRates: [String: Double] = [:]
     @ObservationIgnored private var lastOwnClockStats: [(name: String, rate: Double, stats: AudioCoreAsyncStats)] = []
 
     init() {
@@ -208,9 +210,23 @@ final class AudioEngine {
         }
         for id in ids where rateListeners[id] == nil {
             let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-                Task { @MainActor in self?.scheduleRebuild(force: false) }
+                Task { @MainActor in self?.scheduleRateCheck() }
             }
             if AudioObjectAddPropertyListenerBlock(id, &addr, DispatchQueue.main, block) == noErr { rateListeners[id] = block }
+        }
+    }
+
+    /// A rate listener fired. Starting capture can itself switch a Bluetooth headset to its call
+    /// rate, so only rebuild when a running capture's rate no longer matches its device.
+    private func scheduleRateCheck() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(700))
+            guard !layoutPending else { return scheduleRateCheck() } // a build is under way; look again after it
+            let stale = inputs.contains { device in
+                guard let built = ownClockRates[device.uid] else { return false }
+                return CoreAudioHAL.inputRate(device.id) != built
+            }
+            if stale { scheduleRebuild(force: true) }
         }
     }
 
@@ -247,7 +263,7 @@ final class AudioEngine {
         watchRates(of: ownClock)
         let clock = clockDevice(venue: venue, stream: stream)
         let newSignature = (resolved.map { r in
-            r.map { "\($0.device.uid)|\($0.device.inputChannels)|\($0.channel)|\($0.stereo)|\($0.ownClock ? $0.device.nominalRate : 0)" } ?? "-"
+            r.map { "\($0.device.uid)|\($0.device.inputChannels)|\($0.channel)|\($0.stereo)|\($0.ownClock)" } ?? "-"
         } + [venue?.uid ?? "-", stream?.uid ?? "-", clock?.uid ?? "-", String(bufferFrames)]).joined(separator: "#")
         guard force || newSignature != signature else {
             if appliedGeneration == buildGeneration { layoutPending = false }
@@ -268,6 +284,7 @@ final class AudioEngine {
             venueLatencyMs = nil
             buildWarning = nil
             trackLatencyMs = trackSources.map { _ in nil }
+            ownClockRates = [:]
             appliedGeneration = generation
             layoutPending = false
             return
@@ -296,12 +313,14 @@ final class AudioEngine {
             actualBufferFrames = info.bufferFrames
             venueLatencyMs = info.venueLatencyMs
             trackLatencyMs = info.trackLatencyMs
+            ownClockRates = info.ownClockRates
             buildWarning = info.problems.first
             log.info("engine running: \(info.inputDevices) input devices, buffer \(info.bufferFrames), venue \(info.venueLatencyMs ?? -1) ms")
         case .failure(let failure):
             state = .failed(failure.message)
             buildWarning = nil
             trackLatencyMs = trackSources.map { _ in nil }
+            ownClockRates = [:]
             log.error("engine failed: \(failure.message, privacy: .public)")
         }
     }
@@ -349,6 +368,8 @@ final class EngineSession: @unchecked Sendable {
         var trackLatencyMs: [Double?]
         /// Devices that didn't start and stay silent, worded for the user.
         var problems: [String]
+        /// The rate each own-clock capture runs at, by device UID.
+        var ownClockRates: [String: Double]
     }
 
     struct Failure: Error {
@@ -509,17 +530,60 @@ final class EngineSession: @unchecked Sendable {
             return max(0, own.latencyMs - clockedInputMs)
         }
         return .success(Info(inputDevices: config.inputs.count + ownClock.count, bufferFrames: buffer,
-                             venueLatencyMs: venueIndex >= 0 ? venueMs : nil, trackLatencyMs: trackLatency, problems: problems))
+                             venueLatencyMs: venueIndex >= 0 ? venueMs : nil, trackLatencyMs: trackLatency, problems: problems,
+                             ownClockRates: Dictionary(ownClock.map { ($0.device.uid, $0.rate) }, uniquingKeysWith: { a, _ in a })))
     }
 
-    /// Starts capturing a device on its own clock at its current rate.
+    /// Starts capturing a device on its own clock.
     private func startOwnClock(_ device: AudioDeviceInfo, mixerBuffer: UInt32) -> OwnClock? {
         // Small device buffers keep the added latency down; Bluetooth decides for itself.
         if !device.isBluetooth, let minimum = CoreAudioHAL.minimumBufferFrames(device.id) {
             CoreAudioHAL.setUInt32(device.id, kAudioDevicePropertyBufferFrameSize, max(minimum, 128))
         }
-        let rate = CoreAudioHAL.float64(device.id, kAudioDevicePropertyNominalSampleRate)
-        guard rate > 0, CoreAudioHAL.unsupportedFormat(device.id, kAudioObjectPropertyScopeInput) == nil else { return nil }
+        guard CoreAudioHAL.unsupportedFormat(device.id, kAudioObjectPropertyScopeInput) == nil,
+              var capture = startCapture(device, rate: CoreAudioHAL.inputRate(device.id), mixerBuffer: mixerBuffer)
+        else { return nil }
+        guard device.isBluetooth else { return capture }
+
+        // A headset may only switch to its call profile, and its 16 or 24 kHz rate, once capture
+        // starts. If the rate moved, start a matching capture before stopping the first one, so the
+        // headset never leaves the call profile in between.
+        let settled = Self.settledInputRate(device.id)
+        if settled > 0, settled != capture.rate {
+            log.info("\(device.name, privacy: .public) switched to \(settled) Hz once capture started")
+            guard let matching = startCapture(device, rate: settled, mixerBuffer: mixerBuffer) else {
+                stopCapture(capture)
+                return nil
+            }
+            stopCapture(capture)
+            capture = matching
+        }
+        return capture
+    }
+
+    private let log = Logger(subsystem: "com.sauerdev.lavboard", category: "engine")
+
+    /// Polls the device's input rate until it has held for a quarter of a second (or 1.5 s pass).
+    private static func settledInputRate(_ id: AudioObjectID) -> Double {
+        var rate = CoreAudioHAL.inputRate(id)
+        var stableSince = Date()
+        let deadline = Date().addingTimeInterval(1.5)
+        while Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+            let now = CoreAudioHAL.inputRate(id)
+            if now != rate {
+                rate = now
+                stableSince = Date()
+            } else if Date().timeIntervalSince(stableSince) >= 0.25 {
+                break
+            }
+        }
+        return rate
+    }
+
+    /// Creates an async source at `rate` and starts the device's IOProc filling it.
+    private func startCapture(_ device: AudioDeviceInfo, rate: Double, mixerBuffer: UInt32) -> OwnClock? {
+        guard rate > 0 else { return nil }
         let deviceBuffer = Double(CoreAudioHAL.uint32(device.id, kAudioDevicePropertyBufferFrameSize))
         // Device audio arrives a buffer at a time while the mixer takes small, steady bites; hold
         // enough to ride out both, plus 2 ms of scheduling jitter.
@@ -540,6 +604,13 @@ final class EngineSession: @unchecked Sendable {
         let frames = Double(CoreAudioHAL.fixedLatencyFrames(device.id, kAudioObjectPropertyScopeInput))
             + deviceBuffer + headroom + Double(AudioCoreAsyncLookahead(source))
         return OwnClock(device: device, proc: proc, source: source, rate: rate, latencyMs: frames / rate * 1000)
+    }
+
+    /// Stops a capture that the mixer isn't using yet.
+    private func stopCapture(_ capture: OwnClock) {
+        AudioDeviceStop(capture.device.id, capture.proc)
+        AudioDeviceDestroyIOProcID(capture.device.id, capture.proc)
+        AudioCoreAsyncDestroy(capture.source)
     }
 
     func ownClockStats() -> [(name: String, rate: Double, stats: AudioCoreAsyncStats)] {

@@ -78,6 +78,25 @@ enum CoreAudioHAL {
         return AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &value) == noErr ? value : 0
     }
 
+    /// The rate an input IOProc on the device receives: its first input stream's virtual format,
+    /// or the nominal rate if that can't be read.
+    static func inputRate(_ id: AudioObjectID) -> Double {
+        var addr = address(kAudioDevicePropertyStreams, kAudioObjectPropertyScopeInput)
+        var size: UInt32 = 0
+        if AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size >= 4 {
+            var streams = [AudioStreamID](repeating: 0, count: Int(size) / 4)
+            if AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &streams) == noErr, let first = streams.first {
+                var fmtAddr = address(kAudioStreamPropertyVirtualFormat)
+                var fmt = AudioStreamBasicDescription()
+                var fsize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+                if AudioObjectGetPropertyData(first, &fmtAddr, 0, nil, &fsize, &fmt) == noErr, fmt.mSampleRate > 0 {
+                    return fmt.mSampleRate
+                }
+            }
+        }
+        return float64(id, kAudioDevicePropertyNominalSampleRate)
+    }
+
     /// Smallest IO buffer the device allows, in frames.
     static func minimumBufferFrames(_ id: AudioObjectID) -> UInt32? {
         var addr = address(kAudioDevicePropertyBufferFrameSizeRange)
