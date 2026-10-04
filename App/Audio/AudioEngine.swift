@@ -44,10 +44,9 @@ final class AudioEngine {
     /// resulting layout, so a recording can't start against the old one.
     private(set) var layoutPending = false
 
-    /// Set by the app model whenever tracks are added, removed or re-sourced.
-    var trackSources: [TrackSource] = [] {
-        didSet { if trackSources != oldValue { scheduleRebuild(force: true) } }
-    }
+    /// Track sources and identities in strip order; see `setTracks`.
+    private(set) var trackSources: [TrackSource] = []
+    private(set) var trackIDs: [UUID] = []
     var venueOutputUID: String? {
         didSet { UserDefaults.standard.set(venueOutputUID, forKey: "venueOutputUID"); scheduleRebuild(force: true) }
     }
@@ -58,7 +57,9 @@ final class AudioEngine {
         didSet { UserDefaults.standard.set(Int(bufferFrames), forKey: "bufferFrames"); scheduleRebuild(force: true) }
     }
 
-    @ObservationIgnored let core: OpaquePointer = AudioCoreCreate(1 << 19) // ~11 s of 18-channel audio for the recorder
+    @ObservationIgnored let core: OpaquePointer
+    /// Fader, mute, venue send and balance per track, applied by each track's running position.
+    @ObservationIgnored let controls: TrackControls
 
     private let log = Logger(subsystem: "com.sauerdev.lavboard", category: "engine")
     private let session = EngineSession()
@@ -80,6 +81,9 @@ final class AudioEngine {
     @ObservationIgnored private var lastOwnClockStats: [(name: String, rate: Double, stats: AudioCoreAsyncStats)] = []
 
     init() {
+        let core = AudioCoreCreate(1 << 19) // ~11 s of 18-channel audio for the recorder
+        self.core = core
+        controls = TrackControls(core: core)
         venueOutputUID = UserDefaults.standard.string(forKey: "venueOutputUID")
         streamOutputUID = UserDefaults.standard.string(forKey: "streamOutputUID")
         let frames = UserDefaults.standard.integer(forKey: "bufferFrames")
@@ -133,18 +137,21 @@ final class AudioEngine {
         return meters
     }
 
-    func setTrack(_ index: Int, gainDB: Double, muted: Bool, venueSend: Bool, balance: Double) {
-        AudioCoreSetTrackGain(core, Int32(index), Self.linear(gainDB))
-        AudioCoreSetTrackMute(core, Int32(index), muted)
-        AudioCoreSetTrackVenueSend(core, Int32(index), venueSend)
-        AudioCoreSetTrackBalance(core, Int32(index), Float(balance))
+    /// Set by the app model whenever tracks are added, removed, moved or re-sourced.
+    func setTracks(_ tracks: [(id: UUID, source: TrackSource)]) {
+        let ids = tracks.map(\.id)
+        let sources = tracks.map(\.source)
+        guard ids != trackIDs || sources != trackSources else { return }
+        trackIDs = ids
+        trackSources = sources
+        scheduleRebuild(force: true)
     }
 
     func setStreamLevel(dB: Double) { AudioCoreSetStreamLevel(core, Self.linear(dB)) }
     func setVenueLevel(dB: Double) { AudioCoreSetVenueLevel(core, Self.linear(dB)) }
 
     /// Fader scale: the bottom of the travel (-60 dB) is silence.
-    static func linear(_ dB: Double) -> Float { dB <= -60 ? 0 : Float(pow(10, dB / 20)) }
+    nonisolated static func linear(_ dB: Double) -> Float { dB <= -60 ? 0 : Float(pow(10, dB / 20)) }
 
     /// The input device behind a track, if it is connected.
     func device(for source: TrackSource) -> AudioDeviceInfo? {
@@ -295,6 +302,7 @@ final class AudioEngine {
             ownClock: ownClock,
             clock: devices.isEmpty ? clock : nil,
             tracks: resolved.map { $0.map { (uid: $0.device.uid, channel: $0.channel, stereo: $0.stereo, ownClock: $0.ownClock) } },
+            trackIDs: trackIDs, controls: controls,
             venue: venue, stream: stream, bufferFrames: bufferFrames, core: core)
         session.queue.async {
             let result = self.session.build(config)
@@ -354,6 +362,9 @@ final class EngineSession: @unchecked Sendable {
         var clock: AudioDeviceInfo?
         /// One entry per track; nil when the source isn't connected.
         var tracks: [(uid: String, channel: Int, stereo: Bool, ownClock: Bool)?]
+        /// The tracks behind `tracks`, so their settings move with them into the new layout.
+        var trackIDs: [UUID]
+        var controls: TrackControls
         var venue: AudioDeviceInfo?
         var stream: AudioDeviceInfo?
         var bufferFrames: UInt32
@@ -506,6 +517,7 @@ final class EngineSession: @unchecked Sendable {
         sources.withUnsafeBufferPointer {
             AudioCoreSetAsyncSources(config.core, $0.baseAddress, Int32(sources.count))
         }
+        config.controls.install(config.trackIDs)
 
         var proc: AudioDeviceIOProcID?
         guard AudioDeviceCreateIOProcID(id, AudioCoreIOProc, UnsafeMutableRawPointer(config.core), &proc) == noErr, let proc else {

@@ -80,7 +80,7 @@ final class AppModel {
         // the saved settings.
         guard !Self.isTestHost else { return }
 
-        engine.trackSources = tracks.map(\.source)
+        engine.setTracks(tracks.map { ($0.id, $0.source) })
         pushToEngine()
         save()
         engine.setStreamLevel(dB: streamLevelDB)
@@ -179,6 +179,12 @@ final class AppModel {
         tracks.removeAll { $0.id == id }
     }
 
+    /// Moves a track one place left (-1) or right (+1). Its mute key and file number follow its place.
+    func moveTrack(_ id: UUID, by offset: Int) {
+        guard canEditTracks, let i = tracks.firstIndex(where: { $0.id == id }), tracks.indices.contains(i + offset) else { return }
+        tracks.swapAt(i, i + offset)
+    }
+
     func setSource(_ source: TrackSource, for id: UUID) {
         guard canEditTracks, let i = tracks.firstIndex(where: { $0.id == id }) else { return }
         tracks[i].source = source
@@ -255,7 +261,7 @@ final class AppModel {
     }
 
     private func tracksChanged(from old: [Track]) {
-        if tracks.map(\.source) != old.map(\.source) { engine.trackSources = tracks.map(\.source) }
+        engine.setTracks(tracks.map { ($0.id, $0.source) })
         muted = muted.intersection(tracks.map(\.id))
         pushToEngine()
         save()
@@ -280,10 +286,10 @@ final class AppModel {
     }
 
     private func pushToEngine() {
-        for (i, track) in tracks.enumerated() {
-            engine.setTrack(i, gainDB: track.faderDB, muted: muted.contains(track.id),
-                            venueSend: track.sendToVenue, balance: track.balance)
-        }
+        engine.controls.update(Dictionary(uniqueKeysWithValues: tracks.map { track in
+            (track.id, TrackControls.Settings(gainDB: track.faderDB, muted: muted.contains(track.id),
+                                              venueSend: track.sendToVenue, balance: track.balance))
+        }))
     }
 
     private func save() {

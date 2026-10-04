@@ -4,11 +4,11 @@ import SwiftUI
 // MARK: Tape label and editor
 
 /// The track's name on a piece of console tape. Click to rename, recolour, change the source
-/// or remove the track; right-click for colours.
+/// or remove the track. The strip owns `editing` so its right-click menu can open the editor too.
 struct TapeLabel: View {
     @Environment(AppModel.self) private var app
     let id: UUID
-    @State private var editing = false
+    @Binding var editing: Bool
 
     var body: some View {
         @Bindable var app = app
@@ -31,12 +31,6 @@ struct TapeLabel: View {
             .help("Rename, recolour or change the source of \(track.name)")
             .accessibilityLabel("\(track.name), \(track.source.channelLabel)")
             .accessibilityHint("Opens the track editor")
-            .contextMenu {
-                Button("Edit…") { editing = true }
-                Picker("Tape colour", selection: app.binding(id, \.color, fallback: .white)) {
-                    ForEach(TapeColor.allCases) { Text($0.label).tag($0) }
-                }
-            }
             .popover(isPresented: $editing, arrowEdge: .bottom) {
                 TrackEditor(id: id) { editing = false }
             }
@@ -251,6 +245,7 @@ struct TrackStrip: View {
     let id: UUID
     let compact: Bool
     let balanceRow: Bool
+    @State private var editing = false
 
     var body: some View {
         @Bindable var app = app
@@ -260,7 +255,7 @@ struct TrackStrip: View {
             let muted = app.isMuted(track)
 
             VStack(spacing: 12) {
-                TapeLabel(id: id)
+                TapeLabel(id: id, editing: $editing)
 
                 HStack(spacing: 4) {
                     Text(sourceCaption(track))
@@ -340,6 +335,8 @@ struct TrackStrip: View {
             }
             .padding(compact ? 10 : 12)
             .background(RoundedRectangle(cornerRadius: Console.Radius.container).fill(Console.panel))
+            .contentShape(RoundedRectangle(cornerRadius: Console.Radius.container))
+            .contextMenu { TrackMenu(id: id) { editing = true } }
         }
     }
 
@@ -373,6 +370,48 @@ struct TrackStrip: View {
             app.receiver.connected ? "Switch on TX\(slot + 1)" : "Receiver not connected"
         case .device(_, let name, _, _):
             "Plug in \(name)"
+        }
+    }
+}
+
+/// Right-click menu for a track strip.
+private struct TrackMenu: View {
+    @Environment(AppModel.self) private var app
+    let id: UUID
+    let rename: () -> Void
+
+    var body: some View {
+        if let i = app.tracks.firstIndex(where: { $0.id == id }) {
+            let track = app.tracks[i]
+            let editable = app.canEditTracks
+            Button("Rename…", action: rename)
+            Picker("Colour", selection: app.binding(id, \.color, fallback: .white)) {
+                ForEach(TapeColor.allCases) { Text($0.label).tag($0) }
+            }
+            Menu("Source") {
+                SourceMenu(current: track.source) { app.setSource($0, for: id) }
+            }
+            .disabled(!editable)
+
+            Divider()
+            Button(app.isMuted(track) ? "Unmute" : "Mute") { app.toggleMute(i) }
+            Toggle("Send to venue", isOn: app.binding(id, \.sendToVenue, fallback: true))
+            Button("Reset fader to 0 dB") { app.binding(id, \.faderDB, fallback: 0).wrappedValue = 0 }
+                .disabled(track.faderDB == 0)
+
+            Divider()
+            Button("Move left") { app.moveTrack(id, by: -1) }
+                .disabled(!editable || i == 0)
+            Button("Move right") { app.moveTrack(id, by: 1) }
+                .disabled(!editable || i == app.tracks.count - 1)
+
+            Divider()
+            Button("Remove track", role: .destructive) {
+                // A focused name field must let go first; see TrackEditor.
+                NSApp.keyWindow?.makeFirstResponder(nil)
+                DispatchQueue.main.async { app.removeTrack(id) }
+            }
+            .disabled(!editable)
         }
     }
 }
@@ -667,5 +706,10 @@ struct MasterStrip: View {
         .padding(12)
         .frame(width: 128)
         .background(RoundedRectangle(cornerRadius: Console.Radius.container).fill(Console.panel))
+        .contentShape(RoundedRectangle(cornerRadius: Console.Radius.container))
+        .contextMenu {
+            Button("Reset level to 0 dB") { level = 0 }
+                .disabled(level == 0)
+        }
     }
 }
