@@ -28,12 +28,17 @@ targets:
         LSApplicationCategoryType: public.app-category.music
         LSMinimumSystemVersion: "15.0"
         NSMicrophoneUsageDescription: DJI Controller captures the four DJI transmitter channels to meter, mix and record them.
+    entitlements:
+      path: App/DJIController.entitlements
+      properties:
+        com.apple.security.device.audio-input: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.sauerdev.djicontroller
         PRODUCT_NAME: DJIController
         SWIFT_OBJC_BRIDGING_HEADER: App/Audio/AudioCore-Bridging.h
-        ENABLE_HARDENED_RUNTIME: NO
+        # Hardened runtime blocks code injection, so nothing can borrow the app's microphone permission.
+        ENABLE_HARDENED_RUNTIME: YES
         GCC_OPTIMIZATION_LEVEL: 3
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:

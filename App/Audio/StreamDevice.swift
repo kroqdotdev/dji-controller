@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Observation
+import Security
 import os
 
 /// Installs the bundled "DJI Controller" virtual audio device (built from BlackHole) so
@@ -45,17 +46,45 @@ final class StreamDevice {
             state = .failed("The stream device is missing from the app. Rebuild DJI Controller.")
             return
         }
+        // The app bundle may live somewhere the user (or anything running as the user) can
+        // write to. So the root script copies the driver into a fresh root-only folder first,
+        // checks the copy's signature there, and only then moves it into place.
         let target = Self.quoted(Self.installPath)
         runPrivileged("""
-            /bin/mkdir -p /Library/Audio/Plug-Ins/HAL && \
-            /bin/rm -rf \(target) && \
-            /usr/bin/ditto \(Self.quoted(source)) \(target) && \
-            /usr/sbin/chown -R root:wheel \(target) && \
-            /usr/bin/find \(target) -type d -exec /bin/chmod 755 {} + && \
-            /usr/bin/find \(target) -type f -exec /bin/chmod 644 {} + && \
-            /bin/chmod 755 \(target)/Contents/MacOS/* && \
+            set -e; \
+            staging=$(/usr/bin/mktemp -d /tmp/djicontroller-driver.XXXXXX); \
+            trap '/bin/rm -rf "$staging"' EXIT; \
+            /usr/bin/ditto \(Self.quoted(source)) "$staging/DJIControllerStream.driver"; \
+            /usr/bin/codesign --verify --strict -R=\(Self.quoted(Self.signingRequirement)) "$staging/DJIControllerStream.driver"; \
+            /usr/sbin/chown -R root:wheel "$staging/DJIControllerStream.driver"; \
+            /usr/bin/find "$staging/DJIControllerStream.driver" -type d -exec /bin/chmod 755 {} +; \
+            /usr/bin/find "$staging/DJIControllerStream.driver" -type f -exec /bin/chmod 644 {} +; \
+            /bin/chmod 755 "$staging/DJIControllerStream.driver/Contents/MacOS/"*; \
+            /bin/mkdir -p /Library/Audio/Plug-Ins/HAL; \
+            /bin/rm -rf \(target); \
+            /bin/mv "$staging/DJIControllerStream.driver" \(target); \
             /usr/bin/killall coreaudiod
             """, success: true)
+    }
+
+    /// The driver must carry our identifier and, when the app is signed by a team, that same team.
+    /// Ad-hoc builds have no team to anchor to, so only the identifier can be checked.
+    private static var signingRequirement: String {
+        let identifier = "identifier \"com.sauerdev.djicontroller.stream\""
+        guard let team = runningTeamID else { return identifier }
+        return identifier + " and anchor apple generic and certificate leaf[subject.OU] = \"\(team)\""
+    }
+
+    private static var runningTeamID: String? {
+        var code: SecCode?
+        var staticCode: SecStaticCode?
+        var info: CFDictionary?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code,
+              SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode,
+              SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let dict = info as? [String: Any]
+        else { return nil }
+        return dict[kSecCodeInfoTeamIdentifier as String] as? String
     }
 
     func remove() {
