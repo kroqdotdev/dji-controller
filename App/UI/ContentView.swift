@@ -21,6 +21,9 @@ struct ContentView: View {
         .navigationTitle(title)
         .navigationSubtitle(subtitle)
         .toolbar {
+            if app.updates.state != .idle {
+                ToolbarItem(placement: .primaryAction) { UpdateButton() }
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 if receiver.connected, let mode = receiver.mode, !receiver.switchingMode {
                     Menu {
@@ -68,6 +71,65 @@ struct ContentView: View {
         if case .failed(let message) = app.engine.state { return message }
         if let warning = app.engine.warning { return warning }
         return app.receiver.connected ? "\(app.receiver.connectedCount) of 4 mics on" : ""
+    }
+}
+
+/// Appears only when there is something to say about updates. One click installs and restarts.
+private struct UpdateButton: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        let updates = app.updates
+        switch updates.state {
+        case .available(let version):
+            Button { updates.install() } label: {
+                Label("Update to \(version)", systemImage: "arrow.down.circle")
+                    .labelStyle(.titleAndIcon)
+            }
+            .disabled(app.recorder.isRecording)
+            .help(app.recorder.isRecording
+                  ? "Stop recording to update."
+                  : "Downloads Lavboard \(version) and restarts. Audio stops for a few seconds.")
+        case .downloading(let fraction):
+            progress("Updating", fraction: fraction)
+        case .installing:
+            progress("Restarting", fraction: nil)
+        case .readyToRestart:
+            Button { updates.restartNow() } label: {
+                Label("Restart to update", systemImage: "arrow.clockwise.circle")
+                    .labelStyle(.titleAndIcon)
+            }
+            .disabled(app.recorder.isRecording)
+            .help(app.recorder.isRecording
+                  ? "The update is ready. Stop recording to restart into it."
+                  : "Restarts Lavboard into the new version. Audio stops for a few seconds.")
+        case .checking:
+            progress("Checking for updates", fraction: nil)
+        case .upToDate:
+            Label("Lavboard is up to date", systemImage: "checkmark")
+                .labelStyle(.titleAndIcon)
+                .foregroundStyle(Console.engraving)
+        case .failed(let message):
+            Button { updates.checkNow() } label: {
+                Label("Update failed", systemImage: "exclamationmark.triangle")
+                    .labelStyle(.titleAndIcon)
+            }
+            .help("\(message) Click to try again.")
+        case .idle:
+            EmptyView()
+        }
+    }
+
+    private func progress(_ title: String, fraction: Double?) -> some View {
+        HStack(spacing: 6) {
+            if let fraction {
+                ProgressView(value: fraction).progressViewStyle(.circular).controlSize(.small)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+            Text(title)
+        }
+        .padding(.horizontal, 6)
     }
 }
 
@@ -247,7 +309,9 @@ private struct TransportBar: View {
             .frame(width: 120)
             .disabled(!app.canRecord && !recorder.isRecording)
             .keyboardShortcut("r", modifiers: .command)
-            .help("Record every mic to its own file, plus the stream mix (Command-R)")
+            .help(app.updates.isBusy
+                  ? "Recording is unavailable while Lavboard updates."
+                  : "Record every mic to its own file, plus the stream mix (Command-R)")
 
             if let started = recorder.startedAt {
                 TimelineView(.periodic(from: started, by: 1)) { context in

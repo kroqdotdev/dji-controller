@@ -68,13 +68,34 @@ When you add a parameter, document what it does in `App/Device/MicProtocol.swift
 
 ## Releasing (maintainers)
 
-`scripts/release.sh` archives the app, signs it with Developer ID through the Apple Developer account signed into Xcode, notarizes it and packages a DMG:
+`scripts/release.sh` archives the app, signs it with Developer ID through the Apple Developer account signed into Xcode, notarizes it, packages a DMG and signs an update feed (`appcast.xml`) for it:
 
 ```sh
 scripts/release.sh 0.2.0 --notarize --publish
 ```
 
-`--publish` creates a draft GitHub release with the DMG attached; review it on GitHub, then publish it. Bump the driver's `CFBundleVersion` in `project.yml` whenever the stream device changes, so existing installs offer the update.
+`--publish` creates a draft GitHub release with the DMG and `appcast.xml` attached; review it on GitHub, then publish it. Installed copies read `appcast.xml` from the latest published release and offer the update. Bump the driver's `CFBundleVersion` in `project.yml` whenever the stream device changes, so existing installs offer the driver update too.
+
+### Update signing key
+
+Updates are signed with a Sparkle EdDSA key that lives in the maintainer's login keychain; its public half is `SUPublicEDKey` in `project.yml`. The first release on a new Mac asks for keychain access: choose **Always Allow**. Keep an offline backup of the private key, because installed copies can't verify updates signed with any other key:
+
+```sh
+build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys -x lavboard-update-key.txt   # export
+build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys -f lavboard-update-key.txt   # import on another Mac
+```
+
+### Testing an update locally
+
+Debug builds read a test feed from `LavboardTestFeedURL`. Build a newer version into a DMG in a folder, sign a feed for it and serve the folder (Sparkle only downloads over http or https):
+
+```sh
+build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast --download-url-prefix http://127.0.0.1:8765/ feed/
+python3 -m http.server 8765 --bind 127.0.0.1 --directory feed
+defaults write com.sauerdev.lavboard LavboardTestFeedURL http://127.0.0.1:8765/appcast.xml
+```
+
+Launch an older debug build: the update button appears within a few seconds. Remove the test feed afterwards with `defaults delete com.sauerdev.lavboard LavboardTestFeedURL`.
 
 ## License
 

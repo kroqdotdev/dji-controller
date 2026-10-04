@@ -38,6 +38,7 @@ final class AppModel {
     let engine = AudioEngine()
     let recorder = Recorder()
     let streamDevice = StreamDevice()
+    let updates = UpdateController()
     @ObservationIgnored let meters = MeterBallistics()
 
     var strips: [StripSettings] {
@@ -60,6 +61,7 @@ final class AppModel {
     @ObservationIgnored private var activity: NSObjectProtocol?
     @ObservationIgnored private var keyMonitor: Any?
     @ObservationIgnored private var clickMonitor: Any?
+    @ObservationIgnored private var terminationObserver: NSObjectProtocol?
 
     init() {
         let defaults = UserDefaults.standard
@@ -74,6 +76,13 @@ final class AppModel {
         engine.setVenueLevel(dB: venueLevelDB)
         engine.start()
         receiver.start()
+        updates.shouldDeferRestart = { [weak self] in self?.recorder.isRecording ?? false }
+        updates.start()
+        // However the app quits (including to install an update), finish recordings cleanly.
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stopRecordingForQuit() }
+        }
         streamDevice.onInstalled = { [weak self] in
             guard let self else { return }
             // Route the stream mix to the new device unless another output is already in use.
@@ -109,7 +118,7 @@ final class AppModel {
         muted[index].toggle()
     }
 
-    var canRecord: Bool { engine.state == .running }
+    var canRecord: Bool { engine.state == .running && !updates.isBusy }
 
     func toggleRecording() {
         if recorder.isRecording {
@@ -119,6 +128,12 @@ final class AppModel {
             recorder.start(core: engine.core, trackNames: strips.map(\.name))
             if backupOnTransmitters && recorder.isRecording { receiver.setTransmitterRecording(true) }
         }
+    }
+
+    private func stopRecordingForQuit() {
+        guard recorder.isRecording else { return }
+        recorder.stop()
+        if backupOnTransmitters { receiver.setTransmitterRecording(false) }
     }
 
     private func pushToEngine() {

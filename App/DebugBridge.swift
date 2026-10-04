@@ -33,6 +33,10 @@ enum DebugBridge {
             let i = (Int(arg) ?? 1) - 1
             app.strips[i].color = TapeColor(rawValue: parts[2]) ?? .white
             if parts.count > 3 { app.strips[i].name = parts[3...].joined(separator: " ") }
+        case "update":
+            app.updates.install()
+        case "checkupdates":
+            app.updates.checkNow()
         case "record":
             app.toggleRecording()
         case "snapshot":
@@ -73,6 +77,10 @@ enum DebugBridge {
             "recording": app.recorder.isRecording,
             "lastFolder": app.recorder.lastFolder?.path ?? "",
             "recorderError": app.recorder.error ?? "",
+            "update": String(describing: app.updates.state),
+            "updateFeed": app.updates.feedURL,
+            "updateError": app.updates.lastErrorDetail,
+            "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
         ]
         if let data = try? JSONSerialization.data(withJSONObject: status, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: URL(fileURLWithPath: path))

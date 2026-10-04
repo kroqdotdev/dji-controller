@@ -11,6 +11,10 @@
 # DEVELOPMENT_TEAM in Config/Local.xcconfig, or TEAM_ID in the environment.
 #
 # Only notarized builds open on other Macs without Gatekeeper blocking them.
+#
+# Each release also gets an appcast.xml, signed with the Sparkle EdDSA key in your login keychain,
+# which installed copies of Lavboard read to offer the update. Create the key once with
+# build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys and back it up.
 
 set -euo pipefail
 
@@ -36,6 +40,9 @@ APP_NAME="Lavboard"
 OUT=build/release
 ARCHIVE="$OUT/Lavboard.xcarchive"
 DMG="dist/Lavboard-$VERSION.dmg"
+PACKAGES=build/SourcePackages
+SPARKLE_BIN="$PACKAGES/artifacts/sparkle/Sparkle/bin"
+REPO_URL=https://github.com/kroqdotdev/lavboard
 
 TEAM=${TEAM_ID:-$(sed -n 's/^DEVELOPMENT_TEAM *= *//p' Config/Local.xcconfig 2>/dev/null | head -1)}
 [ -n "$TEAM" ] || { echo "error: set DEVELOPMENT_TEAM in Config/Local.xcconfig or TEAM_ID" >&2; exit 1; }
@@ -65,6 +72,7 @@ xcodebuild archive \
     -configuration Release \
     -destination 'generic/platform=macOS' \
     -archivePath "$ARCHIVE" \
+    -clonedSourcePackagesDirPath "$PACKAGES" \
     -quiet \
     MARKETING_VERSION="$VERSION"
 
@@ -114,10 +122,18 @@ rm -f "$DMG"
 hdiutil convert "$SCRATCH/rw.dmg" -format UDZO -imagekey zlib-level=9 -o "$DMG" -quiet
 echo "==> Built $DMG ($(du -h "$DMG" | cut -f1))"
 
+echo "==> Signing the update feed"
+FEED=$(mktemp -d)
+cp "$DMG" "$FEED/"
+"$SPARKLE_BIN/generate_appcast" --download-url-prefix "$REPO_URL/releases/download/v$VERSION/" "$FEED"
+cp "$FEED/appcast.xml" dist/appcast.xml
+rm -rf "$FEED"
+grep -q 'sparkle:edSignature' dist/appcast.xml || { echo "error: appcast.xml is not signed" >&2; exit 1; }
+
 if [ $PUBLISH -eq 1 ]; then
     NOTES=$(mktemp)
     printf 'Download **Lavboard-%s.dmg**, open it and drag Lavboard into Applications.\n' "$VERSION" > "$NOTES"
-    gh release create "v$VERSION" "$DMG" --draft --title "Lavboard $VERSION" --notes-file "$NOTES" --generate-notes
+    gh release create "v$VERSION" "$DMG" dist/appcast.xml --draft --title "Lavboard $VERSION" --notes-file "$NOTES" --generate-notes
     rm -f "$NOTES"
     echo "==> Draft release v$VERSION created. Review it on GitHub, then publish it."
 fi
