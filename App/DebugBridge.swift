@@ -127,6 +127,12 @@ enum DebugBridge {
             "engineWarning": app.engine.warning ?? "-",
             "venueLatencyMs": app.engine.venueLatencyMs ?? -1,
             "canRecord": app.canRecord,
+            "ownClock": app.engine.ownClockStats().map { own in
+                ["name": own.name, "rate": own.rate, "running": own.stats.running,
+                 "bufferedMs": own.stats.bufferedFrames / own.rate * 1000, "correctionPpm": own.stats.correction * 1e6,
+                 "underruns": own.stats.underruns, "overflows": own.stats.overflows] as [String: Any]
+            },
+            "trackLatencyMs": app.engine.trackLatencyMs.map { $0 ?? -1 },
             "tracks": app.tracks.enumerated().map { i, track in
                 ["name": track.name, "source": track.source.channelLabel, "stereo": track.source.isStereo,
                  "available": app.engine.trackAvailable.indices.contains(i) && app.engine.trackAvailable[i],

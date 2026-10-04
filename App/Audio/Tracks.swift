@@ -75,7 +75,9 @@ struct Track: Codable, Identifiable, Equatable {
     /// keeps two words, and adds the input number when a device has several inputs.
     static func defaultName(deviceName: String, channel: Int, stereo: Bool, deviceChannels: Int) -> String {
         let filler: Set<String> = ["microphone", "mic", "audio", "usb", "usb2.0", "usb-c", "2.0", "input", "stream", "webcam", "device"]
-        let words = deviceName.split(separator: " ").map(String.init).filter { !filler.contains($0.lowercased()) }
+        // "Mads's AirPods Pro" names the owner, not the mic.
+        let words = deviceName.split(separator: " ").map(String.init)
+            .filter { !filler.contains($0.lowercased()) && !$0.hasSuffix("'s") && !$0.hasSuffix("\u{2019}s") }
         var name = words.prefix(2).joined(separator: " ")
         if name.isEmpty { name = deviceName.split(separator: " ").first.map(String.init) ?? "Input" }
         if stereo, deviceChannels > 2 {
@@ -84,6 +86,12 @@ struct Track: Codable, Identifiable, Equatable {
             name += " \(channel + 1)"
         }
         return name
+    }
+
+    /// A device name shortened the same way, without an input number: "C922 Pro Stream Webcam"
+    /// becomes "C922 Pro".
+    static func shortDeviceName(_ deviceName: String) -> String {
+        defaultName(deviceName: deviceName, channel: 0, stereo: false, deviceChannels: 1)
     }
 
     static func defaultSet() -> [Track] {

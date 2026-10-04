@@ -18,7 +18,7 @@ You need macOS 15 or later. For the wireless mics you need a DJI Mic Mini 2S rec
 
 ## What it does
 
-- **Up to eight tracks**, each with a live meter, fader and mute. Start with one per DJI transmitter (with battery status), then click **Add track** for a USB mic, the built-in mic or a channel on an audio interface. Remove any track you don't need.
+- **Up to eight tracks**, each with a live meter, fader and mute. Start with one per DJI transmitter (with battery status), then click **Add track** for a USB mic, the built-in mic, a webcam, a Bluetooth mic or a channel on an audio interface. Remove any track you don't need.
 - **Mono or stereo** per track. Stereo tracks take an input pair and get a balance control.
 - **Mute with keys 1 to 8.** Mutes are instant and click-free.
 - **Hardware gain** on each transmitter (-12 to +12 dB), confirmed by the receiver, and on other inputs when the device allows it.
@@ -57,7 +57,7 @@ Run the tests with `xcodebuild -project Lavboard.xcodeproj -scheme Lavboard test
 ## How it works
 
 - **Control:** the receiver exposes a vendor USB interface (`com.dji.mic`, interface 4). Selecting alternate setting 1 opens two bulk endpoints that carry DJI's DUML protocol: status pushes for the receiver and each transmitter, and set-parameter commands. See `App/Device`.
-- **Audio:** the app builds a private aggregate device from the inputs your tracks use and the outputs. The receiver (or the first input, without one) is the clock master and every other device is drift-compensated, so mixing happens in one small-buffer CoreAudio callback. Inputs must run at 48 kHz; Bluetooth mics and devices without 48 kHz support are not offered yet. The mixer core is lock-free C (`App/Audio/AudioCore.c`).
+- **Audio:** the app builds a private aggregate device from the inputs your tracks use and the outputs. The receiver (or the first input, without one) is the clock master and every other device is drift-compensated, so mixing happens in one small-buffer CoreAudio callback. Bluetooth mics and devices without 48 kHz (many webcams) run on their own clock instead: each is captured separately and converted to 48 kHz by a windowed-sinc resampler that follows its clock drift (`App/Audio/AsyncSource.c`). Their tracks run a little behind the others; the strip shows by how much. The mixer core is lock-free C (`App/Audio/AudioCore.c`).
 - **Recording:** the audio callback writes into a lock-free ring buffer that a background thread drains to disk.
 - **Stream device:** a virtual audio driver built from [BlackHole](https://github.com/ExistentialAudio/BlackHole), customised through `Driver/StreamDriverConfig.h` without editing its source.
 

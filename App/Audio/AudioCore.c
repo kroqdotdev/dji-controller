@@ -22,6 +22,8 @@ struct AudioCore {
 
     AudioCoreTrackLayout tracks[AC_MAX_TRACKS];
     int trackCount;
+    AudioCoreAsyncSource *async[AC_MAX_ASYNC_SOURCES];
+    int asyncCount;
     int ringChannels;
     int venueBuffer;
     int streamBuffer;
@@ -73,6 +75,13 @@ void AudioCoreSetLayout(AudioCore *c, const AudioCoreTrackLayout *tracks, int tr
     c->ringChannels = channels;
     c->venueBuffer = venueBuffer;
     c->streamBuffer = streamBuffer;
+}
+
+void AudioCoreSetAsyncSources(AudioCore *c, AudioCoreAsyncSource *const *sources, int count) {
+    if (!sources || count < 0) count = 0;
+    if (count > AC_MAX_ASYNC_SOURCES) count = AC_MAX_ASYNC_SOURCES;
+    for (int i = 0; i < AC_MAX_ASYNC_SOURCES; i++) c->async[i] = i < count ? sources[i] : NULL;
+    c->asyncCount = count;
 }
 
 int AudioCoreTrackCount(AudioCore *c) { return c->trackCount; }
@@ -141,6 +150,12 @@ static inline const float *sourceChannel(const AudioBufferList *input, int buffe
     return (const float *)b->mData + channel;
 }
 
+/// One channel of an async source rendered this cycle, or NULL.
+static inline const float *asyncChannel(AudioCore *c, int source, int channel, bool rendered) {
+    if (!rendered || source < 0 || source >= c->asyncCount || !c->async[source]) return NULL;
+    return AudioCoreAsyncOutput(c->async[source], channel);
+}
+
 static inline float *outputBuffer(AudioBufferList *output, int index, UInt32 frames, UInt32 *stride) {
     if (index < 0 || index >= (int)output->mNumberBuffers) return NULL;
     AudioBuffer *b = &output->mBuffers[index];
@@ -180,6 +195,12 @@ OSStatus AudioCoreIOProc(AudioObjectID device, const AudioTimeStamp *now,
     }
     if (frames == 0) return noErr;
 
+    // Devices on their own clock: resample this cycle's audio once per source, before mixing.
+    bool asyncRendered = frames <= AC_ASYNC_MAX_FRAMES;
+    for (int i = 0; asyncRendered && i < c->asyncCount; i++) {
+        if (c->async[i]) AudioCoreAsyncRender(c->async[i], frames);
+    }
+
     int tracks = c->trackCount;
     const float *srcL[AC_MAX_TRACKS], *srcR[AC_MAX_TRACKS];
     UInt32 strideL[AC_MAX_TRACKS], strideR[AC_MAX_TRACKS];
@@ -189,8 +210,13 @@ OSStatus AudioCoreIOProc(AudioObjectID device, const AudioTimeStamp *now,
     for (int t = 0; t < tracks; t++) {
         const AudioCoreTrackLayout *l = &c->tracks[t];
         strideL[t] = strideR[t] = 1;
-        srcL[t] = sourceChannel(input, l->buffer, l->channel, frames, &strideL[t]);
-        srcR[t] = l->stereo ? sourceChannel(input, l->bufferRight, l->channelRight, frames, &strideR[t]) : NULL;
+        if (l->asyncSource >= 0) {
+            srcL[t] = asyncChannel(c, l->asyncSource, l->channel, asyncRendered);
+            srcR[t] = l->stereo ? asyncChannel(c, l->asyncSource, l->channelRight, asyncRendered) : NULL;
+        } else {
+            srcL[t] = sourceChannel(input, l->buffer, l->channel, frames, &strideL[t]);
+            srcR[t] = l->stereo ? sourceChannel(input, l->bufferRight, l->channelRight, frames, &strideR[t]) : NULL;
+        }
 
         float g = atomic_load_explicit(&c->mute[t], memory_order_relaxed) ? 0.0f
                                                                           : atomic_load_explicit(&c->gain[t], memory_order_relaxed);

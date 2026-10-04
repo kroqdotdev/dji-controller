@@ -51,6 +51,9 @@ struct TrackTests {
     @Test func defaultNamesAreShortEnoughForTape() {
         #expect(Track.defaultName(deviceName: "Lohsefar Microphone", channel: 0, stereo: false, deviceChannels: 1) == "Lohsefar")
         #expect(Track.defaultName(deviceName: "MacBook Pro Microphone", channel: 0, stereo: false, deviceChannels: 1) == "MacBook Pro")
+        #expect(Track.defaultName(deviceName: "Sam\u{2019}s AirPods Pro", channel: 0, stereo: false, deviceChannels: 1) == "AirPods Pro")
+        #expect(Track.defaultName(deviceName: "C922 Pro Stream Webcam", channel: 0, stereo: true, deviceChannels: 2) == "C922 Pro")
+        #expect(Track.shortDeviceName("Realtek USB2.0 Audio") == "Realtek")
         #expect(Track.defaultName(deviceName: "C922 Pro Stream Webcam", channel: 0, stereo: true, deviceChannels: 2) == "C922 Pro")
         #expect(Track.defaultName(deviceName: "Realtek USB2.0 Audio", channel: 1, stereo: false, deviceChannels: 2) == "Realtek 2")
         #expect(Track.defaultName(deviceName: "Scarlett 18i20 USB", channel: 2, stereo: true, deviceChannels: 18) == "Scarlett 18i20 3+4")
@@ -63,5 +66,14 @@ struct TrackTests {
         #expect(a.identity == b.identity)
         #expect(a.identity != TrackSource.device(uid: "u1", name: "x", channel: 2, stereo: true).identity)
         #expect(TrackSource.device(uid: "u", name: "n", channel: 2, stereo: true).channelLabel == "In 3+4")
+    }
+
+    @Test func ownClockDevicesRunAtTheirBestRateUpTo48k() {
+        let c922: [ClosedRange<Double>] = [16_000...16_000, 24_000...24_000, 32_000...32_000]
+        #expect(CoreAudioHAL.preferredRate(among: c922) == 32_000)
+        #expect(CoreAudioHAL.preferredRate(among: [44_100...44_100, 88_200...88_200]) == 44_100)
+        #expect(CoreAudioHAL.preferredRate(among: [96_000...96_000, 192_000...192_000]) == 96_000)
+        #expect(CoreAudioHAL.preferredRate(among: [8_000...96_000]) == 48_000)
+        #expect(CoreAudioHAL.preferredRate(among: []) == nil)
     }
 }

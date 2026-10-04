@@ -17,11 +17,11 @@ final class CoreHarness {
     deinit { AudioCoreDestroy(core) }
 
     static func mono(_ buffer: Int32, _ channel: Int32) -> AudioCoreTrackLayout {
-        AudioCoreTrackLayout(buffer: buffer, channel: channel, bufferRight: -1, channelRight: -1, stereo: false)
+        AudioCoreTrackLayout(buffer: buffer, channel: channel, bufferRight: -1, channelRight: -1, stereo: false, asyncSource: -1)
     }
 
     static func stereo(_ buffer: Int32, _ left: Int32, _ right: Int32) -> AudioCoreTrackLayout {
-        AudioCoreTrackLayout(buffer: buffer, channel: left, bufferRight: buffer, channelRight: right, stereo: true)
+        AudioCoreTrackLayout(buffer: buffer, channel: left, bufferRight: buffer, channelRight: right, stereo: true, asyncSource: -1)
     }
 
     static let fourMono = (0..<4).map { mono(0, Int32($0)) }
@@ -67,7 +67,7 @@ final class CoreHarness {
     }
 }
 
-private func all(_ samples: [(left: Float, right: Float)], left: Float, right: Float) -> Bool {
+func all(_ samples: [(left: Float, right: Float)], left: Float, right: Float) -> Bool {
     samples.allSatisfy { abs($0.left - left) < 1e-5 && abs($0.right - right) < 1e-5 }
 }
 

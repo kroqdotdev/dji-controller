@@ -10,6 +10,7 @@ struct AudioDeviceInfo: Identifiable, Hashable {
     var outputChannels: Int
     var transportType: UInt32 = 0
     var supports48k = true
+    var nominalRate: Double = 48_000
 
     var isDJIReceiver: Bool { modelUID.contains("2CA3:4015") || modelUID.contains("2CA3:4115") }
     var isBluetooth: Bool {
@@ -17,6 +18,10 @@ struct AudioDeviceInfo: Identifiable, Hashable {
     }
     /// Devices that can run inside the 48 kHz engine as a clocked, sample-aligned source.
     var canJoinEngine: Bool { supports48k && !isBluetooth }
+    /// Everything else with inputs runs on its own clock and is resampled.
+    var runsOnOwnClock: Bool { !canJoinEngine }
+    /// Input channels a track can use: an own-clock device captures its first eight.
+    var usableInputChannels: Int { runsOnOwnClock ? min(inputChannels, Int(AC_ASYNC_MAX_CHANNELS)) : inputChannels }
 }
 
 /// Thin wrappers over the CoreAudio HAL property API.
@@ -33,23 +38,72 @@ enum CoreAudioHAL {
         var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
         guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &ids) == noErr else { return [] }
         return ids.compactMap { id in
-            guard let uid = string(id, kAudioDevicePropertyDeviceUID) else { return nil }
+            // Skip Lavboard's own aggregate before touching it: while the engine queue is setting
+            // it up, its other properties can block for as long as coreaudiod takes.
+            guard let uid = string(id, kAudioDevicePropertyDeviceUID), !uid.hasPrefix(EngineSession.uidPrefix) else { return nil }
             return AudioDeviceInfo(id: id, uid: uid, name: string(id, kAudioObjectPropertyName) ?? uid,
                                    modelUID: string(id, kAudioDevicePropertyModelUID) ?? "",
                                    inputChannels: bufferLayout(id, kAudioObjectPropertyScopeInput).reduce(0, +),
                                    outputChannels: bufferLayout(id, kAudioObjectPropertyScopeOutput).reduce(0, +),
                                    transportType: uint32(id, kAudioDevicePropertyTransportType),
-                                   supports48k: supportsRate(id, 48_000))
+                                   supports48k: supportsRate(id, 48_000),
+                                   nominalRate: float64(id, kAudioDevicePropertyNominalSampleRate))
         }
     }
 
-    static func supportsRate(_ id: AudioObjectID, _ rate: Float64) -> Bool {
+    static func availableRates(_ id: AudioObjectID) -> [ClosedRange<Double>] {
         var addr = address(kAudioDevicePropertyAvailableNominalSampleRates)
         var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else { return false }
+        guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else { return [] }
         var ranges = [AudioValueRange](repeating: AudioValueRange(), count: Int(size) / MemoryLayout<AudioValueRange>.size)
-        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &ranges) == noErr else { return false }
-        return ranges.contains { $0.mMinimum <= rate && rate <= $0.mMaximum }
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &ranges) == noErr else { return [] }
+        return ranges.filter { $0.mMaximum >= $0.mMinimum }.map { $0.mMinimum...$0.mMaximum }
+    }
+
+    static func supportsRate(_ id: AudioObjectID, _ rate: Float64) -> Bool {
+        availableRates(id).contains { $0.contains(rate) }
+    }
+
+    /// The rate to run an own-clock device at: the highest it offers up to 48 kHz (closest to the
+    /// engine, least resampling), or its lowest rate if all are higher.
+    static func preferredRate(among ranges: [ClosedRange<Double>]) -> Double? {
+        let below = ranges.filter { $0.lowerBound <= 48_000 }.map { min($0.upperBound, 48_000) }
+        return below.max() ?? ranges.map(\.lowerBound).min()
+    }
+
+    static func float64(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector) -> Double {
+        var addr = address(selector)
+        var value: Float64 = 0
+        var size = UInt32(MemoryLayout<Float64>.size)
+        return AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &value) == noErr ? value : 0
+    }
+
+    /// The rate an input IOProc on the device receives: its first input stream's virtual format,
+    /// or the nominal rate if that can't be read.
+    static func inputRate(_ id: AudioObjectID) -> Double {
+        var addr = address(kAudioDevicePropertyStreams, kAudioObjectPropertyScopeInput)
+        var size: UInt32 = 0
+        if AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size >= 4 {
+            var streams = [AudioStreamID](repeating: 0, count: Int(size) / 4)
+            if AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &streams) == noErr, let first = streams.first {
+                var fmtAddr = address(kAudioStreamPropertyVirtualFormat)
+                var fmt = AudioStreamBasicDescription()
+                var fsize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+                if AudioObjectGetPropertyData(first, &fmtAddr, 0, nil, &fsize, &fmt) == noErr, fmt.mSampleRate > 0 {
+                    return fmt.mSampleRate
+                }
+            }
+        }
+        return float64(id, kAudioDevicePropertyNominalSampleRate)
+    }
+
+    /// Smallest IO buffer the device allows, in frames.
+    static func minimumBufferFrames(_ id: AudioObjectID) -> UInt32? {
+        var addr = address(kAudioDevicePropertyBufferFrameSizeRange)
+        var range = AudioValueRange()
+        var size = UInt32(MemoryLayout<AudioValueRange>.size)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &range) == noErr, range.mMinimum > 0 else { return nil }
+        return UInt32(range.mMinimum)
     }
 
     /// The device's own input gain, in dB, when the system lets apps change it (many USB mics do).
