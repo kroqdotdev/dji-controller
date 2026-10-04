@@ -41,10 +41,30 @@ enum DebugBridge {
             app.toggleRecording()
         case "snapshot":
             AppDelegate.snapshot(to: arg)
+        case "capture":
+            captureWindow(to: arg)
         case "status":
             writeStatus(app, to: arg)
         default:
             break
+        }
+    }
+
+    /// Captures the main window as the window server draws it, toolbar glass and shadow included.
+    /// CGWindowListCreateImage is unavailable in the macOS 15 SDK but still present at runtime, and
+    /// an app may capture its own windows without Screen Recording permission.
+    private static func captureWindow(to path: String) {
+        guard let window = NSApp.windows.filter({ $0.isVisible && $0.canBecomeMain }).max(by: { $0.frame.width < $1.frame.width }),
+              let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return }
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+        typealias CreateImage = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        let create = unsafeBitCast(symbol, to: CreateImage.self)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            // kCGWindowListOptionIncludingWindow, kCGWindowImageBestResolution
+            guard let image = create(.null, 1 << 3, CGWindowID(window.windowNumber), 1 << 3)?.takeRetainedValue() else { return }
+            try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: path))
         }
     }
 

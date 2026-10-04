@@ -6,6 +6,8 @@ A native macOS mixer for wireless lav mics, made for the DJI Mic Mini 2S. Plug t
 
 Built for running live event streams and podcasts with up to four wireless mics.
 
+![Lavboard mixing four wireless mics labelled Host, Guest, Panel and Q&A, with the Q&A mic muted](docs/screenshot.png)
+
 ## Download
 
 Get **Lavboard** from the [latest release](https://github.com/kroqdotdev/lavboard/releases/latest): download the `.dmg`, open it and drag Lavboard into Applications. It is signed and notarized by Apple, so it opens like any other app.

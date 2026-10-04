@@ -44,6 +44,8 @@ swiftc -O -o /tmp/lavctl tools/lavctl.swift
 
 Other commands are listed in `App/DebugBridge.swift`. Restore any setting you change while testing.
 
+To refresh the README screenshot, switch on all four transmitters and run `tools/readme-screenshot.sh`. It stages demo labels and speech, captures the window and restores your settings.
+
 The Python scripts in `tools/` talk to the receiver directly and are handy for protocol work. Quit the app first, because only one process can hold the receiver's control interface.
 
 ## Protocol safety
