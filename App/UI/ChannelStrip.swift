@@ -1,4 +1,5 @@
 import AppKit
+import MicSystemKit
 import SwiftUI
 
 // MARK: Tape label and editor
@@ -92,8 +93,8 @@ private struct TrackEditor: View {
                         Text(app.sourceDescription(track.source))
                     }
                     .disabled(!app.canEditTracks)
-                    if let identity = track.source.transmitterSlot.flatMap({ app.receiver.transmitters[$0]?.identity }) {
-                        Text("Serial \(identity.serial). Tap this mic and its meter will move.")
+                    if let serial = app.transmitter(for: track.source)?.serial, !serial.isEmpty {
+                        Text("Serial \(serial). Tap this mic and its meter will move.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -130,9 +131,9 @@ private struct SourceMenu: View {
 
     var body: some View {
         let choices = app.sourceChoices()
-        if !choices.transmitters.isEmpty {
-            Section("DJI receiver") {
-                ForEach(choices.transmitters, id: \.source) { choice in
+        ForEach(choices.systems, id: \.id) { system in
+            Section(system.name) {
+                ForEach(system.options, id: \.source) { choice in
                     Button(choice.title) { pick(choice.source) }
                         .disabled(choice.inUse && choice.source != current)
                 }
@@ -164,14 +165,14 @@ private struct SourcePicker: View {
                 .padding(.bottom, 8)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if !choices.transmitters.isEmpty {
-                        group("DJI receiver", choices.transmitters)
+                    ForEach(choices.systems, id: \.id) { system in
+                        group(system.name, system.options)
                     }
                     ForEach(choices.devices, id: \.uid) { device in
                         group(device.name, device.options, note: device.note)
                     }
-                    if choices.transmitters.isEmpty && choices.devices.isEmpty {
-                        Text("Plug in a mic, an audio interface or the DJI receiver to add it here.")
+                    if choices.systems.isEmpty && choices.devices.isEmpty {
+                        Text("Plug in a mic, an audio interface or a wireless receiver to add it here.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -265,8 +266,8 @@ struct TrackStrip: View {
                         .truncationMode(.middle)
                         .help(sourceHelp(track) ?? "")
                     Spacer(minLength: 2)
-                    if let slot = track.source.transmitterSlot {
-                        BatteryView(status: app.receiver.transmitters[slot]?.status)
+                    if track.source.transmitter != nil {
+                        BatteryView(state: app.transmitter(for: track.source))
                     } else if let ms = latency(i), !isBluetooth(track) {
                         Text("+\(Int(ms.rounded())) ms")
                             .font(.stripLabel.monospacedDigit())
@@ -366,8 +367,8 @@ struct TrackStrip: View {
 
     private func missingMessage(_ track: Track) -> String {
         switch track.source {
-        case .transmitter(let slot):
-            app.receiver.connected ? "Switch on TX\(slot + 1)" : "Receiver not connected"
+        case .transmitter(let system, let slot):
+            app.engine.receivers[system] == nil ? "Receiver not connected" : "No channel for TX\(slot + 1) in this mode"
         case .device(_, let name, _, _):
             "Plug in \(name)"
         }
@@ -470,18 +471,26 @@ private struct GainRow: View {
     let compact: Bool
 
     var body: some View {
-        if let slot = track.source.transmitterSlot {
-            let status = app.receiver.transmitters[slot]?.status
-            let pending = app.receiver.pendingGain[slot]
-            let value = pending ?? status?.gainDB ?? 0
+        if let t = track.source.transmitter, let system = app.micSystem(id: t.system), let gain = system.gain {
+            let state = app.transmitter(for: track.source)
+            let value = state?.pendingGainDB ?? state?.gainDB ?? 0
             LabeledRow("Mic gain", compact: compact) {
-                GainStepper(label: "\(value == 0 ? "0" : String(format: "%+d", value)) dB",
-                            enabled: status != nil, faded: pending != nil,
-                            canDecrease: value > -12, canIncrease: value < 12) { step in
-                    app.receiver.setGain(slot: slot, dB: value + step)
+                GainStepper(label: Self.label(value, step: gain.step),
+                            enabled: state?.connected ?? false, faded: state?.pendingGainDB != nil,
+                            canDecrease: value > gain.range.lowerBound, canIncrease: value < gain.range.upperBound) { direction in
+                    system.setGain(min(max(value + Double(direction) * gain.step, gain.range.lowerBound), gain.range.upperBound),
+                                   slot: t.slot)
                 }
             }
-            .help("Gain on the transmitter itself. It changes the signal everywhere, including recordings and the receiver's analog output.")
+            .help("Gain on the transmitter itself. It changes the signal everywhere, including recordings and the receiver's own outputs.")
+        } else if track.source.transmitter != nil {
+            Text(compact ? "Gain on mic" : "Set gain on the mic")
+                .font(.system(size: 11))
+                .foregroundStyle(Console.engraving)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(height: 22)
+                .help("Lavboard can't change this transmitter's gain")
         } else if let gain = app.deviceGain(for: track) {
             LabeledRow("Input gain", compact: compact) {
                 GainStepper(label: String(format: "%.0f dB", gain.value), enabled: true, faded: false,
@@ -500,6 +509,14 @@ private struct GainRow: View {
                 .frame(height: 22)
                 .help("This device doesn't let apps change its gain")
         }
+    }
+}
+
+extension GainRow {
+    static func label(_ dB: Double, step: Double) -> String {
+        let whole = step == step.rounded()
+        if dB == 0 { return "0 dB" }
+        return whole ? String(format: "%+.0f dB", dB) : String(format: "%+.1f dB", dB)
     }
 }
 
@@ -614,19 +631,19 @@ struct AddTrackSlot: View {
 }
 
 struct BatteryView: View {
-    let status: TransmitterStatus?
+    let state: TransmitterState?
 
     var body: some View {
-        if let status {
-            let percent = status.batteryLevel.batteryPercent
-            let low = percent <= 20 && !status.charging
-            let symbol = status.charging ? "battery.100percent.bolt"
+        if let state, state.connected, let battery = state.battery {
+            let percent = Int((battery * 100).rounded())
+            let low = percent <= 20 && !state.charging
+            let symbol = state.charging ? "battery.100percent.bolt"
                 : percent > 80 ? "battery.100percent" : percent > 55 ? "battery.75percent"
                 : percent > 30 ? "battery.50percent" : percent > 10 ? "battery.25percent" : "battery.0percent"
             Image(systemName: symbol)
                 .foregroundStyle(low ? Console.red : Console.engraving)
-                .help(status.charging ? "Charging" : "Battery about \(percent)%")
-                .accessibilityLabel(status.charging ? "Charging" : "Battery about \(percent) percent")
+                .help(state.charging ? "Charging" : "Battery about \(percent)%")
+                .accessibilityLabel(state.charging ? "Charging" : "Battery about \(percent) percent")
         }
     }
 }

@@ -1,27 +1,31 @@
 import Foundation
 
 /// Where a track's audio comes from.
-enum TrackSource: Codable, Hashable {
-    /// A DJI transmitter slot on the receiver (0-3, shown as TX1-TX4).
-    case transmitter(slot: Int)
+enum TrackSource: Hashable {
+    /// A transmitter slot (0-based, shown as TX1, TX2 ...) of a wireless mic system, identified
+    /// by its module's `MicSystem.id`.
+    case transmitter(system: String, slot: Int)
     /// A channel (or a stereo pair starting at `channel`) on any input device. `name` is cached
     /// so the strip can still say what is missing when the device is unplugged.
     case device(uid: String, name: String, channel: Int, stereo: Bool)
+
+    /// Tracks saved before mic systems were modules all used the DJI Mic Mini 2S.
+    static let legacySystemID = "dji-mic-mini-2s"
 
     var isStereo: Bool {
         if case .device(_, _, _, let stereo) = self { return stereo }
         return false
     }
 
-    var transmitterSlot: Int? {
-        if case .transmitter(let slot) = self { return slot }
+    var transmitter: (system: String, slot: Int)? {
+        if case .transmitter(let system, let slot) = self { return (system, slot) }
         return nil
     }
 
     /// Identifies the physical input, ignoring the cached device name.
     var identity: String {
         switch self {
-        case .transmitter(let slot): "tx\(slot)"
+        case .transmitter(let system, let slot): "\(system)#tx\(slot)"
         case .device(let uid, _, let channel, let stereo): "\(uid)#\(channel)#\(stereo)"
         }
     }
@@ -29,10 +33,46 @@ enum TrackSource: Codable, Hashable {
     /// Short description for the strip, e.g. "TX2" or "In 3+4".
     var channelLabel: String {
         switch self {
-        case .transmitter(let slot):
+        case .transmitter(_, let slot):
             "TX\(slot + 1)"
         case .device(_, _, let channel, let stereo):
             stereo ? "In \(channel + 1)+\(channel + 2)" : "In \(channel + 1)"
+        }
+    }
+}
+
+extension TrackSource: Codable {
+    private enum Kind: String, CodingKey { case transmitter, device }
+    private enum Field: String, CodingKey { case system, slot, uid, name, channel, stereo }
+
+    /// Same shape as the compiler would synthesize, e.g. {"transmitter":{"system":"...","slot":1}}.
+    /// A transmitter without a system was saved before modules and belongs to the DJI Mic Mini 2S.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Kind.self)
+        if c.contains(.transmitter) {
+            let t = try c.nestedContainer(keyedBy: Field.self, forKey: .transmitter)
+            self = .transmitter(system: try t.decodeIfPresent(String.self, forKey: .system) ?? Self.legacySystemID,
+                                slot: try t.decode(Int.self, forKey: .slot))
+        } else {
+            let d = try c.nestedContainer(keyedBy: Field.self, forKey: .device)
+            self = .device(uid: try d.decode(String.self, forKey: .uid), name: try d.decode(String.self, forKey: .name),
+                           channel: try d.decode(Int.self, forKey: .channel), stereo: try d.decode(Bool.self, forKey: .stereo))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Kind.self)
+        switch self {
+        case .transmitter(let system, let slot):
+            var t = c.nestedContainer(keyedBy: Field.self, forKey: .transmitter)
+            try t.encode(system, forKey: .system)
+            try t.encode(slot, forKey: .slot)
+        case .device(let uid, let name, let channel, let stereo):
+            var d = c.nestedContainer(keyedBy: Field.self, forKey: .device)
+            try d.encode(uid, forKey: .uid)
+            try d.encode(name, forKey: .name)
+            try d.encode(channel, forKey: .channel)
+            try d.encode(stereo, forKey: .stereo)
         }
     }
 }
@@ -95,7 +135,7 @@ struct Track: Codable, Identifiable, Equatable {
     }
 
     static func defaultSet() -> [Track] {
-        (0..<4).map { Track(name: "Mic \($0 + 1)", source: .transmitter(slot: $0)) }
+        (0..<4).map { Track(name: "Mic \($0 + 1)", source: .transmitter(system: TrackSource.legacySystemID, slot: $0)) }
     }
 }
 
@@ -109,7 +149,7 @@ struct LegacyStripSettings: Decodable {
     static func migrate(_ strips: [LegacyStripSettings]) -> [Track] {
         strips.prefix(4).enumerated().map { slot, strip in
             Track(name: strip.name, color: strip.color ?? .white, faderDB: strip.faderDB ?? 0,
-                  sendToVenue: strip.sendToVenue ?? true, source: .transmitter(slot: slot))
+                  sendToVenue: strip.sendToVenue ?? true, source: .transmitter(system: TrackSource.legacySystemID, slot: slot))
         }
     }
 }

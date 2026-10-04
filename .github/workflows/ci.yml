@@ -40,6 +40,15 @@ jobs:
           -derivedDataPath build
           ENABLE_HARDENED_RUNTIME=NO
 
+      # Each mic system module (and the shared kit) carries its own tests.
+      - name: Test mic system packages
+        run: |
+          for package in Packages/*/; do
+            echo "::group::$package"
+            swift test --package-path "$package"
+            echo "::endgroup::"
+          done
+
       - name: Build Release
         run: >
           xcodebuild build

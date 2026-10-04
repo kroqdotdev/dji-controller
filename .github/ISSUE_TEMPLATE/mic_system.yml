@@ -1,0 +1,40 @@
+name: Support a mic system
+description: Ask for (or offer) support for another wireless mic system
+labels: [mic system]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Each wireless system is a module; see "Adding a mic system" in CONTRIBUTING.md. A module can start audio-only and gain controls once the receiver's protocol is understood, so even partial information helps.
+  - type: input
+    id: system
+    attributes:
+      label: Mic system
+      placeholder: RØDE Wireless PRO
+    validations:
+      required: true
+  - type: textarea
+    id: usb
+    attributes:
+      label: How the receiver shows up on the Mac
+      description: From System Information > USB (vendor and product ID) and Audio MIDI Setup (input channels, sample rates). Mention if the receiver changes when you switch modes.
+      placeholder: |
+        USB vendor ID 0x19F7, product ID 0x....
+        2 input channels at 48 kHz in split mode
+    validations:
+      required: true
+  - type: textarea
+    id: controls
+    attributes:
+      label: What you'd like Lavboard to control
+      description: For example gain, mute, battery, recording on the transmitters or modes. Note what the maker's own app can do over USB.
+  - type: dropdown
+    id: help
+    attributes:
+      label: Can you help?
+      options:
+        - I'd like to write the module myself
+        - I can test with my hardware
+        - I'm asking for it
+    validations:
+      required: true

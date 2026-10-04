@@ -1,5 +1,6 @@
 import CoreAudio
 import Foundation
+import MicSystemKit
 
 struct AudioDeviceInfo: Identifiable, Hashable {
     var id: AudioObjectID
@@ -12,7 +13,10 @@ struct AudioDeviceInfo: Identifiable, Hashable {
     var supports48k = true
     var nominalRate: Double = 48_000
 
-    var isDJIReceiver: Bool { modelUID.contains("2CA3:4015") || modelUID.contains("2CA3:4115") }
+    /// What mic system modules see when matching their receiver.
+    var description: AudioDeviceDescription {
+        AudioDeviceDescription(uid: uid, name: name, modelUID: modelUID, inputChannels: inputChannels)
+    }
     var isBluetooth: Bool {
         transportType == kAudioDeviceTransportTypeBluetooth || transportType == kAudioDeviceTransportTypeBluetoothLE
     }

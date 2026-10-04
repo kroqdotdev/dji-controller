@@ -1,6 +1,6 @@
 # Contributing to Lavboard
 
-Thanks for helping out. Bug reports, fixes, protocol findings and new features are all welcome.
+Thanks for helping out. Bug reports, fixes, protocol findings, support for more mic systems and new features are all welcome.
 
 For anything bigger than a small fix, open an issue first so we can agree on the approach before you spend time on it.
 
@@ -27,32 +27,83 @@ CODE_SIGN_IDENTITY = Apple Development
 
 ```sh
 xcodebuild -project Lavboard.xcodeproj -scheme Lavboard test
+for package in Packages/*/; do swift test --package-path "$package"; done
 ```
 
-The tests cover the DUML framing, status decoding, command encoding and the real-time mixer. None of them need hardware, and CI runs them on every pull request.
+The app tests cover the real-time mixer, the resampler, track settings and updates; each package under `Packages/` tests its own module (the DJI tests cover the DUML framing, status decoding and command encoding). None of them need hardware, and CI runs all of them on every pull request.
+
+## Adding a mic system
+
+Lavboard supports wireless mic systems through modules: one Swift package per system under `Packages/`, built on the `MicSystem` contract in [`Packages/MicSystemKit`](Packages/MicSystemKit/Sources/MicSystemKit/MicSystem.swift). A module talks to its receiver and reports what it knows. It never draws UI and never touches the audio engine, so it can't break the mixer, and every system gets the same console look.
+
+### What a module provides
+
+Required:
+
+- `id`, `name` and `transmitterCount`. The `id` is saved with every track that uses the system, so never change it after a release.
+- `isReceiver(_:)`: recognises the receiver's CoreAudio input device, usually by its USB vendor and product ID.
+- `transmitters`: one `TransmitterState` per slot (connected, battery, gain and so on; leave unknown fields nil).
+- `audioChannel(forSlot:)`: which channel of the receiver's audio carries each transmitter, in the current mode.
+
+Optional. Implement only what the hardware supports, and the app shows only those controls:
+
+| Capability | Shown as |
+|---|---|
+| `gain` and `setGain(_:slot:)` | A mic gain stepper on the strip |
+| `battery` and `charging` in `TransmitterState` | A battery icon on the strip |
+| `canRecordOnTransmitters` and `setTransmitterRecording(_:)` | "Backup on mics" in the transport bar |
+| `modes`, `currentModeID`, `setMode(_:)`, `modeSwitchWarning(to:)` | A mode menu in the toolbar, with a confirmation when the module warns |
+| `settings`, `settingsNote`, `set(_:to:)` | A section in Settings with toggles and choices |
+| `notice` | A banner above the desk, optionally with a button that switches mode |
+
+### Steps
+
+1. Copy [`Packages/MicSystemTemplate`](Packages/MicSystemTemplate) to `Packages/<YourSystem>`, rename the package, target and type, and pick an `id` (lowercase with dashes, such as `rode-wireless-pro`).
+2. Start audio-only: fill in `isReceiver(_:)` and `audioChannel(forSlot:)`. With the receiver plugged in, its transmitters appear under **Add track**.
+3. Register the module: add the package under `packages:` and to the Lavboard target's `dependencies:` in `project.yml`, list the type in `MicSystems.all` in `App/MicSystems.swift`, and add a row to the table in the README.
+4. Add controls as you work out the receiver's protocol. `USBBulkLink` in MicSystemKit opens a USB vendor interface and streams its bulk endpoints, which is how the DJI module talks to its receiver. A system that uses HID or Bluetooth LE can use those instead; whatever it needs stays inside the module.
+5. Test the decoding with real captured traffic, as `Packages/DJIMicMini2S/Tests` does, and run `swift test --package-path Packages/<YourSystem>`.
+
+### Rules for modules
+
+- **Never send anything destructive without the user's explicit confirmation**: commands that erase recordings, factory-reset or reboot hardware. Document every parameter the module sends, and what it does, next to its definition.
+- **Confirm changes** from the receiver's own status reports rather than assuming a command worked; report unconfirmed gain as `pendingGainDB`.
+- **Hop to the main actor** before touching state from USB or other callbacks.
+- **Say what you tested on**: the hardware, firmware and modes, in the pull request.
+
+Modules are compiled into the app and reviewed as pull requests. Lavboard deliberately doesn't load plug-ins at runtime: notarization and the hardened runtime depend on library validation, and code that talks to hardware deserves review.
+
+### Working without hardware
+
+Debug builds include a fake two-transmitter system that uses the Mac's built-in microphone as its "receiver". Every capability is simulated, which is handy for interface work:
+
+```sh
+defaults write com.sauerdev.lavboard FakeMicSystem -bool true    # then relaunch a debug build
+defaults delete com.sauerdev.lavboard FakeMicSystem               # turn it off again
+```
 
 ## Testing with a receiver
 
-Most real-world behaviour needs a DJI Mic Mini 2S receiver plugged in. Debug builds include a command bridge, so you can exercise the app from a shell:
+Most real-world behaviour needs a supported receiver plugged in. Debug builds include a command bridge, so you can exercise the app from a shell:
 
 ```sh
 swiftc -O -o /tmp/lavctl tools/lavctl.swift
 /tmp/lavctl "status /tmp/status.json"   # receiver, transmitters, engine and meters as JSON
 /tmp/lavctl "snapshot /tmp/window.png"  # render the window to a PNG
-/tmp/lavctl "gain 2 3"                   # set TX2 to +3 dB
+/tmp/lavctl "gain 2 3"                   # set TX2 to +3 dB on the first system with hardware gain
 ```
 
 Other commands are listed in `App/DebugBridge.swift`. Restore any setting you change while testing.
 
 To refresh the README screenshot, switch on all four transmitters and run `tools/readme-screenshot.sh`. It stages demo labels and speech, captures the window and restores your settings.
 
-The Python scripts in `tools/` talk to the receiver directly and are handy for protocol work. Quit the app first, because only one process can hold the receiver's control interface.
+The Python scripts in `tools/` talk to the DJI receiver directly and are handy for protocol work, and a good model for exploring another receiver. Quit the app first, because only one process can hold the receiver's control interface.
 
 ## Protocol safety
 
-Some receiver parameters are destructive. Parameter `0x07` sent to a transmitter **formats it and deletes every recording without asking**, and `0x23` sent to the receiver reboots it. Neither is exposed in the app, and new code must never send them without an explicit confirmation from the user.
+Receivers can have destructive commands, and they rarely ask before acting. On the DJI Mic Mini 2S, parameter `0x07` sent to a transmitter **formats it and deletes every recording**, and `0x23` sent to the receiver reboots it. Neither is exposed in the app. No module may send a command like that without an explicit confirmation from the user.
 
-When you add a parameter, document what it does in `App/Device/MicProtocol.swift`, confirm the change through the receiver's status pushes, and add a decoding test using a real captured frame.
+When you add a DJI parameter, document what it does in `Packages/DJIMicMini2S/Sources/DJIMicMini2S/MicProtocol.swift`, confirm the change through the receiver's status pushes, and add a decoding test using a real captured frame. Other modules follow the same pattern.
 
 ## Code guidelines
 

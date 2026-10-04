@@ -7,3 +7,8 @@ Driver/Info.plist
 Config/Local.xcconfig
 App/Lavboard.entitlements
 dist/
+
+# Swift package builds (swift test in Packages/*)
+.build/
+.swiftpm/
+Package.resolved

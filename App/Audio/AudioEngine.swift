@@ -1,10 +1,11 @@
 import CoreAudio
 import Foundation
+import MicSystemKit
 import Observation
 import os
 
 /// Runs the mixer on a private aggregate device. Every 48 kHz input device a track uses joins it:
-/// the DJI receiver is the clock master when a track uses it (otherwise the first input device
+/// a wireless receiver is the clock master when a track uses one (otherwise the first input device
 /// is), and all other devices are drift-compensated, so mixing, metering and recording happen in
 /// one small-buffer IOProc with every track sample-aligned.
 ///
@@ -24,9 +25,13 @@ final class AudioEngine {
 
     private(set) var state: State = .idle
     private(set) var outputs: [AudioDeviceInfo] = []
-    /// Input devices tracks can use, other than the DJI receiver (whose channels are offered as TX1-TX4).
+    /// Input devices tracks can use, other than wireless receivers (whose channels are offered as
+    /// transmitters instead).
     private(set) var inputs: [AudioDeviceInfo] = []
-    private(set) var receiverDevice: AudioDeviceInfo?
+    /// The connected receiver of each mic system, by `MicSystem.id`.
+    private(set) var receivers: [String: AudioDeviceInfo] = [:]
+    /// The app's mic system modules; set once before `start`.
+    @ObservationIgnored var micSystems: [any MicSystem] = []
     /// Whether each track's source is connected, in track order.
     private(set) var trackAvailable: [Bool] = []
     /// How far behind the 48 kHz inputs each own-clock track runs, in milliseconds; nil for tracks
@@ -137,6 +142,11 @@ final class AudioEngine {
         return meters
     }
 
+    /// Re-resolves track sources, e.g. after a mic system changed which channel carries a transmitter.
+    func refresh() {
+        scheduleRebuild(force: false)
+    }
+
     /// Set by the app model whenever tracks are added, removed, moved or re-sourced.
     func setTracks(_ tracks: [(id: UUID, source: TrackSource)]) {
         let ids = tracks.map(\.id)
@@ -156,7 +166,7 @@ final class AudioEngine {
     /// The input device behind a track, if it is connected.
     func device(for source: TrackSource) -> AudioDeviceInfo? {
         switch source {
-        case .transmitter: receiverDevice
+        case .transmitter(let system, _): receivers[system]
         case .device(let uid, _, _, _): inputs.first { $0.uid == uid }
         }
     }
@@ -183,9 +193,11 @@ final class AudioEngine {
 
     private func resolve(_ source: TrackSource) -> Resolved? {
         switch source {
-        case .transmitter(let slot):
-            guard let receiverDevice, slot < receiverDevice.inputChannels else { return nil }
-            return Resolved(device: receiverDevice, channel: slot, stereo: false)
+        case .transmitter(let systemID, let slot):
+            guard let device = receivers[systemID],
+                  let system = micSystems.first(where: { type(of: $0).id == systemID }),
+                  let channel = system.audioChannel(forSlot: slot), channel < device.inputChannels else { return nil }
+            return Resolved(device: device, channel: channel, stereo: false)
         case .device(let uid, _, let channel, let stereo):
             guard let device = inputs.first(where: { $0.uid == uid }),
                   channel >= 0, channel + (stereo ? 1 : 0) < device.usableInputChannels else { return nil }
@@ -249,9 +261,16 @@ final class AudioEngine {
 
     private func rebuildIfNeeded(force: Bool) {
         let all = CoreAudioHAL.devices()
-        outputs = all.filter { $0.outputChannels > 0 && !$0.isDJIReceiver }
-        inputs = all.filter { $0.inputChannels > 0 && !$0.isDJIReceiver && $0.uid != StreamDevice.deviceUID }
-        receiverDevice = all.first { $0.isDJIReceiver && $0.inputChannels > 0 }
+        let receiverOf = { (device: AudioDeviceInfo) in
+            self.micSystems.first { type(of: $0).isReceiver(device.description) }.map { type(of: $0).id }
+        }
+        outputs = all.filter { $0.outputChannels > 0 && receiverOf($0) == nil }
+        inputs = all.filter { $0.inputChannels > 0 && receiverOf($0) == nil && $0.uid != StreamDevice.deviceUID }
+        var found: [String: AudioDeviceInfo] = [:]
+        for device in all where device.inputChannels > 0 {
+            if let id = receiverOf(device), found[id] == nil { found[id] = device }
+        }
+        receivers = found
         let venue = outputs.first { $0.uid == venueOutputUID }
         var stream = outputs.first { $0.uid == streamOutputUID }
         routingWarning = nil
@@ -280,11 +299,14 @@ final class AudioEngine {
         buildGeneration += 1
         let generation = buildGeneration
 
-        // Clock master first: the receiver when a track uses it, otherwise the first used device.
-        var devices: [AudioDeviceInfo] = []
-        for r in resolved.compactMap({ $0 }) where !r.ownClock && !devices.contains(where: { $0.uid == r.device.uid }) {
-            if r.device.isDJIReceiver { devices.insert(r.device, at: 0) } else { devices.append(r.device) }
+        // Clock master first: the first wireless receiver a track uses, otherwise the first used device.
+        var receiverDevices: [AudioDeviceInfo] = []
+        var otherDevices: [AudioDeviceInfo] = []
+        for r in resolved.compactMap({ $0 }) where !r.ownClock {
+            guard !(receiverDevices + otherDevices).contains(where: { $0.uid == r.device.uid }) else { continue }
+            if receivers.values.contains(where: { $0.uid == r.device.uid }) { receiverDevices.append(r.device) } else { otherDevices.append(r.device) }
         }
+        let devices = receiverDevices + otherDevices
         guard !devices.isEmpty || !ownClock.isEmpty else {
             session.queue.async { self.session.teardown() }
             state = trackSources.isEmpty ? .idle : .waitingForInputs
