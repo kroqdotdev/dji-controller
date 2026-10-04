@@ -52,5 +52,5 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: "Run `log show --last 10m --predicate 'subsystem == \"com.sauerdev.djicontroller\"'` and paste the output."
+      description: "Run `log show --last 10m --predicate 'subsystem == \"com.sauerdev.lavboard\"'` and paste the output."
       render: text

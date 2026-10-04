@@ -106,7 +106,7 @@ private struct MicSettings: View {
                     }
                 }
             } footer: {
-                Text("A virtual mic called DJI Controller that carries the stream mix to Streamlabs. Setting it up or removing it asks for your password and restarts the Mac's audio for a moment.")
+                Text("A virtual mic called Lavboard that carries the stream mix to Streamlabs. Setting it up or removing it asks for your password and restarts the Mac's audio for a moment.")
                     .foregroundStyle(.secondary)
             }
 
@@ -186,7 +186,7 @@ private struct Desk: View {
     private var streamNote: String? {
         switch app.streamDevice.state {
         case .notInstalled:
-            return "Adds a mic called DJI Controller for Streamlabs"
+            return "Adds a mic called Lavboard for Streamlabs"
         case .outdated:
             return "A newer stream device is ready"
         case .working:
@@ -194,7 +194,7 @@ private struct Desk: View {
         case .failed(let message):
             return message
         case .installed:
-            return app.engine.streamOutputUID == StreamDevice.deviceUID ? "In Streamlabs, pick DJI Controller as the mic" : nil
+            return app.engine.streamOutputUID == StreamDevice.deviceUID ? "In Streamlabs, pick Lavboard as the mic" : nil
         }
     }
 

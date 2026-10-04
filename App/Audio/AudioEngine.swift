@@ -34,7 +34,7 @@ final class AudioEngine {
 
     @ObservationIgnored let core: OpaquePointer = AudioCoreCreate(1 << 20) // ~21 s of 6-channel audio for the recorder
 
-    private let log = Logger(subsystem: "com.sauerdev.djicontroller", category: "engine")
+    private let log = Logger(subsystem: "com.sauerdev.lavboard", category: "engine")
     private let session = EngineSession()
     private var signature = ""
     private var rebuildTask: Task<Void, Never>?
@@ -163,7 +163,7 @@ final class AudioEngine {
 
 /// CoreAudio objects owned by the engine; only touched on `queue`.
 final class EngineSession: @unchecked Sendable {
-    static let uidPrefix = "com.sauerdev.djicontroller.engine"
+    static let uidPrefix = "com.sauerdev.lavboard.engine"
 
     struct Config: @unchecked Sendable {
         var dji: AudioDeviceInfo
@@ -183,7 +183,7 @@ final class EngineSession: @unchecked Sendable {
         var message: String
     }
 
-    let queue = DispatchQueue(label: "com.sauerdev.djicontroller.engine")
+    let queue = DispatchQueue(label: "com.sauerdev.lavboard.engine")
     private var aggregate: AudioObjectID = 0
     private var procID: AudioDeviceIOProcID?
 
@@ -194,7 +194,7 @@ final class EngineSession: @unchecked Sendable {
             subDevices.append([kAudioSubDeviceUIDKey: output.uid, kAudioSubDeviceDriftCompensationKey: 1])
         }
         let description: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "DJI Controller Engine",
+            kAudioAggregateDeviceNameKey: "Lavboard Engine",
             kAudioAggregateDeviceUIDKey: "\(Self.uidPrefix).\(UUID().uuidString)",
             kAudioAggregateDeviceIsPrivateKey: 1,
             kAudioAggregateDeviceIsStackedKey: 0,

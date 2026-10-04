@@ -4,7 +4,7 @@ import Observation
 import Security
 import os
 
-/// Installs the bundled "DJI Controller" virtual audio device (built from BlackHole) so
+/// Installs the bundled "Lavboard" virtual audio device (built from BlackHole) so
 /// Streamlabs can use the stream mix as a mic. Needs administrator rights once, because audio
 /// drivers live in /Library, and restarts the system audio service so it loads.
 @Observable @MainActor
@@ -17,14 +17,16 @@ final class StreamDevice {
         case failed(String)
     }
 
-    static let deviceUID = "DJI Controller_UID"
-    static let installPath = "/Library/Audio/Plug-Ins/HAL/DJIControllerStream.driver"
+    static let deviceUID = "Lavboard_UID"
+    static let installPath = "/Library/Audio/Plug-Ins/HAL/LavboardStream.driver"
+    /// Installed by builds from before the app was renamed to Lavboard; removed on install.
+    static let legacyInstallPath = "/Library/Audio/Plug-Ins/HAL/DJIControllerStream.driver"
 
     private(set) var state: State = .notInstalled
     /// Called once the device is visible after a successful install.
     var onInstalled: (() -> Void)?
 
-    private let log = Logger(subsystem: "com.sauerdev.djicontroller", category: "stream-device")
+    private let log = Logger(subsystem: "com.sauerdev.lavboard", category: "stream-device")
 
     init() {
         refresh()
@@ -43,7 +45,7 @@ final class StreamDevice {
 
     func install() {
         guard let source = bundledURL?.path else {
-            state = .failed("The stream device is missing from the app. Rebuild DJI Controller.")
+            state = .failed("The stream device is missing from the app. Rebuild Lavboard.")
             return
         }
         // The app bundle may live somewhere the user (or anything running as the user) can
@@ -52,17 +54,17 @@ final class StreamDevice {
         let target = Self.quoted(Self.installPath)
         runPrivileged("""
             set -e; \
-            staging=$(/usr/bin/mktemp -d /tmp/djicontroller-driver.XXXXXX); \
+            staging=$(/usr/bin/mktemp -d /tmp/lavboard-driver.XXXXXX); \
             trap '/bin/rm -rf "$staging"' EXIT; \
-            /usr/bin/ditto \(Self.quoted(source)) "$staging/DJIControllerStream.driver"; \
-            /usr/bin/codesign --verify --strict -R=\(Self.quoted(Self.signingRequirement)) "$staging/DJIControllerStream.driver"; \
-            /usr/sbin/chown -R root:wheel "$staging/DJIControllerStream.driver"; \
-            /usr/bin/find "$staging/DJIControllerStream.driver" -type d -exec /bin/chmod 755 {} +; \
-            /usr/bin/find "$staging/DJIControllerStream.driver" -type f -exec /bin/chmod 644 {} +; \
-            /bin/chmod 755 "$staging/DJIControllerStream.driver/Contents/MacOS/"*; \
+            /usr/bin/ditto \(Self.quoted(source)) "$staging/LavboardStream.driver"; \
+            /usr/bin/codesign --verify --strict -R=\(Self.quoted(Self.signingRequirement)) "$staging/LavboardStream.driver"; \
+            /usr/sbin/chown -R root:wheel "$staging/LavboardStream.driver"; \
+            /usr/bin/find "$staging/LavboardStream.driver" -type d -exec /bin/chmod 755 {} +; \
+            /usr/bin/find "$staging/LavboardStream.driver" -type f -exec /bin/chmod 644 {} +; \
+            /bin/chmod 755 "$staging/LavboardStream.driver/Contents/MacOS/"*; \
             /bin/mkdir -p /Library/Audio/Plug-Ins/HAL; \
-            /bin/rm -rf \(target); \
-            /bin/mv "$staging/DJIControllerStream.driver" \(target); \
+            /bin/rm -rf \(target) \(Self.quoted(Self.legacyInstallPath)); \
+            /bin/mv "$staging/LavboardStream.driver" \(target); \
             /usr/bin/killall coreaudiod
             """, success: true)
     }
@@ -70,7 +72,7 @@ final class StreamDevice {
     /// The driver must carry our identifier and, when the app is signed by a team, that same team.
     /// Ad-hoc builds have no team to anchor to, so only the identifier can be checked.
     private static var signingRequirement: String {
-        let identifier = "identifier \"com.sauerdev.djicontroller.stream\""
+        let identifier = "identifier \"com.sauerdev.lavboard.stream\""
         guard let team = runningTeamID else { return identifier }
         return identifier + " and anchor apple generic and certificate leaf[subject.OU] = \"\(team)\""
     }
@@ -88,11 +90,11 @@ final class StreamDevice {
     }
 
     func remove() {
-        runPrivileged("/bin/rm -rf \(Self.quoted(Self.installPath)) && /usr/bin/killall coreaudiod", success: false)
+        runPrivileged("/bin/rm -rf \(Self.quoted(Self.installPath)) \(Self.quoted(Self.legacyInstallPath)) && /usr/bin/killall coreaudiod", success: false)
     }
 
     private var bundledURL: URL? {
-        Bundle.main.url(forResource: "DJIControllerStream", withExtension: "driver")
+        Bundle.main.url(forResource: "LavboardStream", withExtension: "driver")
     }
 
     private func runPrivileged(_ command: String, success installing: Bool) {

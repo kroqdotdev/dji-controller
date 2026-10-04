@@ -26,13 +26,13 @@ final class Recorder {
         didSet { UserDefaults.standard.set(format.rawValue, forKey: "recordingFormat") }
     }
 
-    private let log = Logger(subsystem: "com.sauerdev.djicontroller", category: "recorder")
+    private let log = Logger(subsystem: "com.sauerdev.lavboard", category: "recorder")
     private var writer: TrackWriter?
 
     init() {
         let saved = UserDefaults.standard.string(forKey: "recordingFolder")
         folder = saved.map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.urls(for: .musicDirectory, in: .userDomainMask)[0].appendingPathComponent("DJI Recordings")
+            ?? FileManager.default.urls(for: .musicDirectory, in: .userDomainMask)[0].appendingPathComponent("Lavboard")
         format = Format(rawValue: UserDefaults.standard.string(forKey: "recordingFormat") ?? "") ?? .pcm24
     }
 

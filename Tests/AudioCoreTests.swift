@@ -1,6 +1,6 @@
 import AudioToolbox
 import Testing
-@testable import DJIController
+@testable import Lavboard
 
 /// Drives the real-time IOProc with synthetic buffers: 4 input channels, a venue and a stream output.
 final class CoreHarness {

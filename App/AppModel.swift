@@ -32,6 +32,8 @@ enum TapeColor: String, Codable, CaseIterable, Identifiable {
 
 @Observable @MainActor
 final class AppModel {
+    /// Declared first so it runs before the engine and recorder read their saved settings.
+    @ObservationIgnored private let legacySettingsMigrated: Void = AppModel.migrateLegacySettings()
     let receiver = ReceiverModel()
     let engine = AudioEngine()
     let recorder = Recorder()
@@ -88,6 +90,19 @@ final class AppModel {
         #if DEBUG
         DebugBridge.install(self)
         #endif
+    }
+
+    /// Builds from before the rename to Lavboard saved settings under the old bundle identifier.
+    /// Copies them once, on the first launch that finds no Lavboard settings yet.
+    private static func migrateLegacySettings() {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: "strips") == nil,
+              let legacy = UserDefaults(suiteName: "com.sauerdev.djicontroller") else { return }
+        let keys = ["strips", "streamLevelDB", "venueLevelDB", "backupOnTransmitters", "streamOutputUID",
+                    "venueOutputUID", "bufferFrames", "recordingFolder", "recordingFormat"]
+        for key in keys {
+            if let value = legacy.object(forKey: key) { defaults.set(value, forKey: key) }
+        }
     }
 
     func toggleMute(_ index: Int) {

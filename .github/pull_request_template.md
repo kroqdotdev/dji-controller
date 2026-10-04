@@ -2,7 +2,7 @@
 
 ## How was it tested?
 
-- [ ] `xcodebuild -scheme DJIController test` passes
+- [ ] `xcodebuild -scheme Lavboard test` passes
 - [ ] Tested with a receiver (describe the setup below), or not needed for this change
 
 ## Checklist

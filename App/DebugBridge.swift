@@ -3,10 +3,10 @@ import AppKit
 import Foundation
 
 /// Debug builds only: accepts commands over a distributed notification so the app can be
-/// exercised end to end from a shell (see tools/djictl.swift).
+/// exercised end to end from a shell (see tools/lavctl.swift).
 @MainActor
 enum DebugBridge {
-    static let name = Notification.Name("com.sauerdev.djicontroller.debug")
+    static let name = Notification.Name("com.sauerdev.lavboard.debug")
 
     static func install(_ app: AppModel) {
         DistributedNotificationCenter.default().addObserver(forName: name, object: nil, queue: .main) { note in
