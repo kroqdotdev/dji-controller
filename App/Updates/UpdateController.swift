@@ -14,17 +14,29 @@ final class UpdateController: NSObject {
         case available(version: String)
         case downloading(fraction: Double?)
         case installing
+        /// Downloaded and verified, waiting for a recording to stop before restarting.
+        case readyToRestart
         case upToDate
         case failed(String)
     }
 
     private(set) var state: State = .idle
+    /// True while an update is downloading or installing; recording is blocked meanwhile.
+    var isBusy: Bool {
+        switch state {
+        case .downloading, .installing: true
+        default: false
+        }
+    }
+    /// Asked right before the app restarts; return true to hold the restart (e.g. while recording).
+    @ObservationIgnored var shouldDeferRestart: (() -> Bool)?
     var feedURL: String { updater?.feedURL?.absoluteString ?? "" }
     /// Underlying cause of the last failure, for diagnostics.
     @ObservationIgnored private(set) var lastErrorDetail = ""
 
     @ObservationIgnored private var updater: SPUUpdater?
     @ObservationIgnored private var pendingChoice: ((SPUUserUpdateChoice) -> Void)?
+    @ObservationIgnored private var pendingRestart: ((SPUUserUpdateChoice) -> Void)?
     @ObservationIgnored private var expectedBytes: UInt64 = 0
     @ObservationIgnored private var receivedBytes: UInt64 = 0
     @ObservationIgnored private let log = Logger(subsystem: "com.sauerdev.lavboard", category: "updates")
@@ -47,6 +59,14 @@ final class UpdateController: NSObject {
         expectedBytes = 0
         receivedBytes = 0
         state = .downloading(fraction: nil)
+        reply(.install)
+    }
+
+    /// Restarts into an update that was held back while recording.
+    func restartNow() {
+        guard let reply = pendingRestart else { return }
+        pendingRestart = nil
+        state = .installing
         reply(.install)
     }
 
@@ -131,9 +151,17 @@ extension UpdateController: SPUUserDriver {
     nonisolated func showExtractionReceivedProgress(_ progress: Double) {}
 
     nonisolated func showReady(toInstallAndRelaunch reply: @escaping (SPUUserUpdateChoice) -> Void) {
-        // The user already chose to install when they clicked the button.
-        MainActor.assumeIsolated { state = .installing }
-        reply(.install)
+        MainActor.assumeIsolated {
+            // The user already chose to install when they clicked the button, but never restart
+            // in the middle of a recording: hold it until the recording stops.
+            if shouldDeferRestart?() == true {
+                pendingRestart = reply
+                state = .readyToRestart
+            } else {
+                state = .installing
+                reply(.install)
+            }
+        }
     }
 
     nonisolated func showInstallingUpdate(withApplicationTerminated applicationTerminated: Bool, retryTerminatingApplication: @escaping () -> Void) {
@@ -149,7 +177,9 @@ extension UpdateController: SPUUserDriver {
     nonisolated func dismissUpdateInstallation() {
         MainActor.assumeIsolated {
             switch state {
-            case .checking, .downloading, .installing: state = .idle
+            case .checking, .downloading, .installing, .readyToRestart:
+                pendingRestart = nil
+                state = .idle
             default: break
             }
         }

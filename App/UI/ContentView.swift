@@ -94,6 +94,15 @@ private struct UpdateButton: View {
             progress("Updating", fraction: fraction)
         case .installing:
             progress("Restarting", fraction: nil)
+        case .readyToRestart:
+            Button { updates.restartNow() } label: {
+                Label("Restart to update", systemImage: "arrow.clockwise.circle")
+                    .labelStyle(.titleAndIcon)
+            }
+            .disabled(app.recorder.isRecording)
+            .help(app.recorder.isRecording
+                  ? "The update is ready. Stop recording to restart into it."
+                  : "Restarts Lavboard into the new version. Audio stops for a few seconds.")
         case .checking:
             progress("Checking for updates", fraction: nil)
         case .upToDate:
@@ -300,7 +309,9 @@ private struct TransportBar: View {
             .frame(width: 120)
             .disabled(!app.canRecord && !recorder.isRecording)
             .keyboardShortcut("r", modifiers: .command)
-            .help("Record every mic to its own file, plus the stream mix (Command-R)")
+            .help(app.updates.isBusy
+                  ? "Recording is unavailable while Lavboard updates."
+                  : "Record every mic to its own file, plus the stream mix (Command-R)")
 
             if let started = recorder.startedAt {
                 TimelineView(.periodic(from: started, by: 1)) { context in
