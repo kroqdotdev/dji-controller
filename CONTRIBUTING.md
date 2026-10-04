@@ -142,9 +142,11 @@ build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys -f lavboard-upd
 
 ### Testing an update locally
 
-Debug builds read a test feed from `LavboardTestFeedURL`. Build a newer version into a DMG in a folder, sign a feed for it and serve the folder (Sparkle only downloads over http or https):
+Debug builds don't check the public feed: they run as `com.sauerdev.lavboard.debug`, and Sparkle can't replace an app with one that has a different bundle identifier. They only check a test feed set in `LavboardTestFeedURL`, so the test update must be a debug build too. Build a newer debug version into a folder, sign a feed for it and serve the folder (Sparkle only downloads over http or https):
 
 ```sh
+xcodebuild -project Lavboard.xcodeproj -scheme Lavboard -configuration Debug -derivedDataPath build/update-test MARKETING_VERSION=9.9.9 -quiet
+mkdir -p feed && ditto -c -k --keepParent build/update-test/Build/Products/Debug/Lavboard.app feed/Lavboard-9.9.9.zip
 build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast --download-url-prefix http://127.0.0.1:8765/ feed/
 python3 -m http.server 8765 --bind 127.0.0.1 --directory feed
 defaults write com.sauerdev.lavboard.debug LavboardTestFeedURL http://127.0.0.1:8765/appcast.xml
