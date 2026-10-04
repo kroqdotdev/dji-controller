@@ -141,6 +141,7 @@ enum DebugBridge {
             "engineWarning": app.engine.warning ?? "-",
             "venueLatencyMs": app.engine.venueLatencyMs ?? -1,
             "canRecord": app.canRecord,
+            "micAccess": String(describing: app.micAccess),
             "ownClock": app.engine.ownClockStats().map { own in
                 ["name": own.name, "rate": own.rate, "running": own.stats.running,
                  "bufferedMs": own.stats.bufferedFrames / own.rate * 1000, "correctionPpm": own.stats.correction * 1e6,

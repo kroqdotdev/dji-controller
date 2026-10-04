@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-DOMAIN=com.sauerdev.lavboard
+DOMAIN=com.sauerdev.lavboard.debug
 VERSION=$(sed -n 's/^ *MARKETING_VERSION: *//p' project.yml | head -1)
 OUT="$PWD/docs/screenshot.png"
 # Captured into a fresh folder first, so a failed capture can never pass for the committed image.

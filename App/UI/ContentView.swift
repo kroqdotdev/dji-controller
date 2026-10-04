@@ -16,6 +16,7 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            MicAccessBanner()
             ForEach(app.micSystems.indices, id: \.self) { i in
                 let system = app.micSystems[i]
                 if let notice = system.notice, app.tracks.contains(where: { $0.source.transmitter?.system == type(of: system).id }) {
@@ -97,6 +98,11 @@ struct ContentView: View {
 
     /// The engine only takes over the subtitle when it needs attention.
     private var subtitle: String {
+        switch app.micAccess {
+        case .asking: return "Waiting for microphone access"
+        case .denied: return "Microphone access is off"
+        case .unknown, .granted: break
+        }
         if case .failed(let message) = app.engine.state { return message }
         if let warning = app.engine.warning { return warning }
         let tracks = app.tracks.count == 1 ? "1 track" : "\(app.tracks.count) tracks"
@@ -246,6 +252,38 @@ private struct MicSystemSettings: View {
                 Text(note).foregroundStyle(.secondary)
             }
         }
+    }
+}
+
+/// Explains a pending or refused microphone permission; nothing can be heard without it.
+private struct MicAccessBanner: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        switch app.micAccess {
+        case .asking:
+            banner("macOS is asking whether Lavboard may use the microphone. Choose Allow so Lavboard can hear your mics.")
+        case .denied:
+            banner("Lavboard can't hear any mic because microphone access is off. Turn it on in Privacy & Security, then reopen Lavboard.",
+                   action: ("Open Privacy Settings", app.openMicrophoneSettings))
+        case .unknown, .granted:
+            EmptyView()
+        }
+    }
+
+    private func banner(_ message: String, action: (title: String, run: () -> Void)? = nil) -> some View {
+        HStack(spacing: 14) {
+            Text(message)
+                .font(.system(size: 13))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            if let action {
+                Button(action.title, action: action.run)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Console.panel)
     }
 }
 

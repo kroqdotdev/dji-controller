@@ -42,6 +42,14 @@ final class UpdateController: NSObject {
     @ObservationIgnored private let log = Logger(subsystem: "com.sauerdev.lavboard", category: "updates")
 
     func start() {
+        #if DEBUG
+        // Debug builds have their own bundle identifier, and Sparkle can't replace an app with one
+        // that has another identifier, so they only check a local test feed (see CONTRIBUTING).
+        guard UserDefaults.standard.string(forKey: "LavboardTestFeedURL") != nil else {
+            log.info("debug build: update checks are off without LavboardTestFeedURL")
+            return
+        }
+        #endif
         let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: self, delegate: self)
         do {
             try updater.start()
@@ -72,6 +80,12 @@ final class UpdateController: NSObject {
 
     /// A user-initiated check (menu item, or retry after a failure).
     func checkNow() {
+        #if DEBUG
+        if updater == nil {
+            state = .failed("Debug builds only check a local test feed (LavboardTestFeedURL).")
+            return
+        }
+        #endif
         guard let updater, updater.canCheckForUpdates else { return }
         state = .checking
         updater.checkForUpdates()
@@ -188,7 +202,7 @@ extension UpdateController: SPUUserDriver {
 
 extension UpdateController: SPUUpdaterDelegate {
     #if DEBUG
-    /// Debug builds can point at a local test feed: defaults write com.sauerdev.lavboard LavboardTestFeedURL <url>
+    /// Debug builds can point at a local test feed: defaults write com.sauerdev.lavboard.debug LavboardTestFeedURL <url>
     nonisolated func feedURLString(for updater: SPUUpdater) -> String? {
         UserDefaults.standard.string(forKey: "LavboardTestFeedURL")
     }
