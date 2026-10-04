@@ -124,6 +124,9 @@ enum DebugBridge {
                  "pendingGain": app.receiver.pendingGain[i] as Any, "battery": tx?.status?.batteryLevel ?? 0]
             },
             "engine": engineState,
+            "engineWarning": app.engine.warning ?? "-",
+            "venueLatencyMs": app.engine.venueLatencyMs ?? -1,
+            "canRecord": app.canRecord,
             "tracks": app.tracks.enumerated().map { i, track in
                 ["name": track.name, "source": track.source.channelLabel, "stereo": track.source.isStereo,
                  "available": app.engine.trackAvailable.indices.contains(i) && app.engine.trackAvailable[i],

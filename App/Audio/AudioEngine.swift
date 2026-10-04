@@ -28,7 +28,14 @@ final class AudioEngine {
     private(set) var actualBufferFrames: UInt32 = 0
     /// Added latency of the venue path on top of the wireless link, in milliseconds.
     private(set) var venueLatencyMs: Double?
-    private(set) var warning: String?
+    /// A routing problem to show the user, if any.
+    var warning: String? { routingWarning ?? outputWarning }
+    private var routingWarning: String?
+    /// A selected output that didn't join the running engine.
+    private var outputWarning: String?
+    /// True from the moment tracks, outputs or devices change until the engine runs with the
+    /// resulting layout, so a recording can't start against the old one.
+    private(set) var layoutPending = false
 
     /// Set by the app model whenever tracks are added, removed or re-sourced.
     var trackSources: [TrackSource] = [] {
@@ -49,6 +56,9 @@ final class AudioEngine {
     private let log = Logger(subsystem: "com.sauerdev.lavboard", category: "engine")
     private let session = EngineSession()
     private var signature = ""
+    /// Each build gets a number; only the latest one's result is applied.
+    private var buildGeneration = 0
+    private var appliedGeneration = 0
     private var rebuildTask: Task<Void, Never>?
     private var listener: AudioObjectPropertyListenerBlock?
     private var restartListener: AudioObjectPropertyListenerBlock?
@@ -89,6 +99,8 @@ final class AudioEngine {
     private func audioServiceRestarted() {
         log.info("audio service restarted; rebuilding")
         state = trackSources.isEmpty ? .idle : .waitingForInputs
+        layoutPending = true
+        buildGeneration += 1 // results of a build already in flight refer to dead objects
         session.queue.async { self.session.forget() }
         installListeners()
         signature = ""
@@ -128,6 +140,7 @@ final class AudioEngine {
     // MARK: Rebuild
 
     private func scheduleRebuild(force: Bool) {
+        layoutPending = true
         rebuildTask?.cancel()
         rebuildTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(force ? 50 : 600))
@@ -162,9 +175,9 @@ final class AudioEngine {
         receiverDevice = all.first { $0.isDJIReceiver && $0.inputChannels > 0 }
         let venue = outputs.first { $0.uid == venueOutputUID }
         var stream = outputs.first { $0.uid == streamOutputUID }
-        warning = nil
+        routingWarning = nil
         if let s = stream, s.uid == venue?.uid {
-            warning = "Stream and venue can't use the same output."
+            routingWarning = "Stream and venue can't use the same output."
             stream = nil
         }
 
@@ -172,8 +185,13 @@ final class AudioEngine {
         trackAvailable = resolved.map { $0 != nil }
         let newSignature = (resolved.map { r in r.map { "\($0.device.uid)|\($0.device.inputChannels)|\($0.channel)|\($0.stereo)" } ?? "-" }
             + [venue?.uid ?? "-", stream?.uid ?? "-", String(bufferFrames)]).joined(separator: "#")
-        guard force || newSignature != signature else { return }
+        guard force || newSignature != signature else {
+            if appliedGeneration == buildGeneration { layoutPending = false }
+            return
+        }
         signature = newSignature
+        buildGeneration += 1
+        let generation = buildGeneration
 
         // Clock master first: the receiver when a track uses it, otherwise the first used device.
         var devices: [AudioDeviceInfo] = []
@@ -184,6 +202,9 @@ final class AudioEngine {
             session.queue.async { self.session.teardown() }
             state = trackSources.isEmpty ? .idle : .waitingForInputs
             venueLatencyMs = nil
+            outputWarning = nil
+            appliedGeneration = generation
+            layoutPending = false
             return
         }
 
@@ -193,19 +214,25 @@ final class AudioEngine {
             venue: venue, stream: stream, bufferFrames: bufferFrames, core: core)
         session.queue.async {
             let result = self.session.build(config)
-            Task { @MainActor in self.apply(result) }
+            Task { @MainActor in self.apply(result, generation: generation) }
         }
     }
 
-    private func apply(_ result: Result<EngineSession.Info, EngineSession.Failure>) {
+    private func apply(_ result: Result<EngineSession.Info, EngineSession.Failure>, generation: Int) {
+        // A newer build is queued behind this one and will replace it.
+        guard generation == buildGeneration else { return }
+        appliedGeneration = generation
+        layoutPending = false
         switch result {
         case .success(let info):
             state = .running
             actualBufferFrames = info.bufferFrames
             venueLatencyMs = info.venueLatencyMs
+            outputWarning = info.missingOutput
             log.info("engine running: \(info.inputDevices) input devices, buffer \(info.bufferFrames), venue \(info.venueLatencyMs ?? -1) ms")
         case .failure(let failure):
             state = .failed(failure.message)
+            outputWarning = nil
             log.error("engine failed: \(failure.message, privacy: .public)")
         }
     }
@@ -230,6 +257,8 @@ final class EngineSession: @unchecked Sendable {
         var inputDevices: Int
         var bufferFrames: UInt32
         var venueLatencyMs: Double?
+        /// Set when a selected output didn't join the aggregate and stays silent.
+        var missingOutput: String?
     }
 
     struct Failure: Error {
@@ -269,11 +298,19 @@ final class EngineSession: @unchecked Sendable {
         aggregate = id
 
         // The aggregate's streams appear asynchronously.
-        let expectedInputs = members.reduce(0) { $0 + CoreAudioHAL.bufferLayout($1.id, kAudioObjectPropertyScopeInput).count }
+        let map = members.map { device in
+            BufferMap.SubDevice(uid: device.uid,
+                                inputStreams: CoreAudioHAL.bufferLayout(device.id, kAudioObjectPropertyScopeInput),
+                                outputStreams: CoreAudioHAL.bufferLayout(device.id, kAudioObjectPropertyScopeOutput))
+        }
+        let expectedInputs = map.reduce(0) { $0 + $1.inputStreams.count }
+        let expectedOutputs = map.reduce(0) { $0 + $1.outputStreams.count }
         var inputLayout: [Int] = []
+        var outputLayout: [Int] = []
         for _ in 0..<50 {
             inputLayout = CoreAudioHAL.bufferLayout(id, kAudioObjectPropertyScopeInput)
-            if inputLayout.count >= expectedInputs { break }
+            outputLayout = CoreAudioHAL.bufferLayout(id, kAudioObjectPropertyScopeOutput)
+            if inputLayout.count >= expectedInputs && outputLayout.count >= expectedOutputs { break }
             Thread.sleep(forTimeInterval: 0.02)
         }
         guard inputLayout.count == expectedInputs else {
@@ -289,11 +326,6 @@ final class EngineSession: @unchecked Sendable {
             return .failure(Failure(message: "Unexpected audio format (\(bad))."))
         }
 
-        let map = members.map { device in
-            BufferMap.SubDevice(uid: device.uid,
-                                inputStreams: CoreAudioHAL.bufferLayout(device.id, kAudioObjectPropertyScopeInput),
-                                outputStreams: CoreAudioHAL.bufferLayout(device.id, kAudioObjectPropertyScopeOutput))
-        }
         let layouts: [AudioCoreTrackLayout] = config.tracks.map { track in
             guard let track, let left = BufferMap.input(channel: track.channel, of: track.uid, in: map) else {
                 return AudioCoreTrackLayout(buffer: -1, channel: -1, bufferRight: -1, channelRight: -1, stereo: track?.stereo ?? false)
@@ -303,8 +335,22 @@ final class EngineSession: @unchecked Sendable {
                                         bufferRight: Int32(right?.buffer ?? -1), channelRight: Int32(right?.channel ?? -1),
                                         stereo: track.stereo)
         }
-        let venueIndex = config.venue.flatMap { BufferMap.firstOutput(of: $0.uid, in: map) } ?? -1
-        let streamIndex = config.stream.flatMap { BufferMap.firstOutput(of: $0.uid, in: map) } ?? -1
+        // An output index is only used if the aggregate really has that stream, with the
+        // device's channel count; otherwise the output stays silent and the user is told.
+        var missingOutput: String?
+        func outputIndex(_ device: AudioDeviceInfo?) -> Int {
+            guard let device else { return -1 }
+            guard let index = BufferMap.firstOutput(of: device.uid, in: map),
+                  let expected = map.first(where: { $0.uid == device.uid })?.outputStreams.first,
+                  index < outputLayout.count, outputLayout[index] == expected
+            else {
+                missingOutput = "\(device.name) didn't join the engine, so it is silent."
+                return -1
+            }
+            return index
+        }
+        let venueIndex = outputIndex(config.venue)
+        let streamIndex = outputIndex(config.stream)
         layouts.withUnsafeBufferPointer {
             AudioCoreSetLayout(config.core, $0.baseAddress, Int32(layouts.count), Int32(venueIndex), Int32(streamIndex))
         }
@@ -327,7 +373,8 @@ final class EngineSession: @unchecked Sendable {
                 + CoreAudioHAL.fixedLatencyFrames(venue.id, kAudioObjectPropertyScopeOutput) + 2 * buffer
             return Double(frames) / 48.0
         }
-        return .success(Info(inputDevices: config.inputs.count, bufferFrames: buffer, venueLatencyMs: venueMs))
+        return .success(Info(inputDevices: config.inputs.count, bufferFrames: buffer,
+                             venueLatencyMs: venueIndex >= 0 ? venueMs : nil, missingOutput: missingOutput))
     }
 
     /// After an audio service restart the old objects no longer exist; drop them without calls.

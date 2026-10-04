@@ -144,7 +144,7 @@ private struct SourceMenu: View {
                 }
             }
         }
-        ForEach(choices.devices, id: \.name) { device in
+        ForEach(choices.devices, id: \.uid) { device in
             Section(device.name) {
                 ForEach(device.options, id: \.source) { choice in
                     Button(choice.title) { pick(choice.source) }
@@ -173,7 +173,7 @@ private struct SourcePicker: View {
                     if !choices.transmitters.isEmpty {
                         group("DJI receiver", choices.transmitters)
                     }
-                    ForEach(choices.devices, id: \.name) { device in
+                    ForEach(choices.devices, id: \.uid) { device in
                         group(device.name, device.options)
                     }
                     if choices.transmitters.isEmpty && choices.devices.isEmpty {

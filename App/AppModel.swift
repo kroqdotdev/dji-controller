@@ -23,7 +23,8 @@ struct SourceChoice {
 
 struct SourceChoices {
     var transmitters: [SourceChoice]
-    var devices: [(name: String, options: [SourceChoice])]
+    /// Keyed by UID: two identical USB mics share a name.
+    var devices: [(uid: String, name: String, options: [SourceChoice])]
 }
 
 @Observable @MainActor
@@ -188,7 +189,7 @@ final class AppModel {
                                     note: receiver.transmitters[slot]?.status == nil ? "Off" : nil)
             }
         }
-        let devices = engine.inputs.filter(\.canJoinEngine).map { device -> (name: String, options: [SourceChoice]) in
+        let devices = engine.inputs.filter(\.canJoinEngine).map { device -> (uid: String, name: String, options: [SourceChoice]) in
             func choice(_ channel: Int, stereo: Bool, title: String) -> SourceChoice {
                 let source = TrackSource.device(uid: device.uid, name: device.name, channel: channel, stereo: stereo)
                 let name = Track.defaultName(deviceName: device.name, channel: channel, stereo: stereo, deviceChannels: device.inputChannels)
@@ -203,7 +204,7 @@ final class AppModel {
                     options.append(choice(c, stereo: true, title: "Inputs \(c + 1) and \(c + 2), stereo"))
                 }
             }
-            return (device.name, options)
+            return (device.uid, device.name, options)
         }
         return SourceChoices(transmitters: transmitters, devices: devices)
     }
@@ -235,13 +236,13 @@ final class AppModel {
         save()
     }
 
-    var canRecord: Bool { engine.state == .running && !updates.isBusy }
+    var canRecord: Bool { engine.state == .running && !engine.layoutPending && !updates.isBusy }
 
     func toggleRecording() {
         if recorder.isRecording {
             recorder.stop()
             if backupOnTransmitters { receiver.setTransmitterRecording(false) }
-        } else {
+        } else if canRecord {
             recorder.start(core: engine.core, tracks: tracks.map { ($0.name, $0.source.isStereo ? 2 : 1) })
             if backupOnTransmitters && recorder.isRecording { receiver.setTransmitterRecording(true) }
         }
