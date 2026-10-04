@@ -1,41 +1,8 @@
 import SwiftUI
 
-/// Turns raw per-frame peaks into display values: instant attack, 24 dB/s release,
-/// a 1.5 s peak hold and a 2 s clip latch.
-final class MeterBallistics {
-    struct Channel: Equatable {
-        var level: Float = -120
-        var hold: Float = -120
-        fileprivate var holdUntil = Date.distantPast
-        fileprivate var clipUntil = Date.distantPast
-        var clipping: Bool { clipUntil > Date() }
-    }
-
-    /// Indices 0-3 are the transmitters, 4 the stream mix, 5 the venue mix.
-    private(set) var channels = [Channel](repeating: Channel(), count: 6)
-    private var last = Date()
-
-    func update(_ meters: AudioCoreMeters, now: Date) {
-        let dt = Float(min(now.timeIntervalSince(last), 0.25))
-        last = now
-        let peaks = withUnsafeBytes(of: meters.peak) { Array($0.bindMemory(to: Float.self)) } + [meters.streamPeak, meters.venuePeak]
-        for (i, peak) in peaks.enumerated() {
-            let db = peak > 0 ? 20 * log10(peak) : -120
-            var c = channels[i]
-            c.level = max(db, c.level - 24 * dt)
-            if db >= c.hold || now > c.holdUntil {
-                c.hold = max(db, c.hold - 24 * dt)
-                if db >= c.hold { c.holdUntil = now.addingTimeInterval(1.5) }
-            }
-            if peak >= 0.999 { c.clipUntil = now.addingTimeInterval(2) }
-            channels[i] = c
-        }
-    }
-}
-
 /// Hardware-style LED ladder: 30 segments of 2 dB from -60 dBFS to 0.
 struct LEDMeter: View {
-    let channel: MeterBallistics.Channel
+    let channel: MeterStore.Level
     var dimmed = false
 
     static let floor: Float = -60

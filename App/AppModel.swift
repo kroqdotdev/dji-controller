@@ -1,25 +1,7 @@
 import AppKit
 import Foundation
 import Observation
-
-struct StripSettings: Codable, Equatable {
-    var name: String
-    var color: TapeColor = .white
-    var faderDB: Double = 0
-    var sendToVenue = true
-
-    init(name: String) {
-        self.name = name
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        name = try c.decode(String.self, forKey: .name)
-        color = try c.decodeIfPresent(TapeColor.self, forKey: .color) ?? .white
-        faderDB = try c.decodeIfPresent(Double.self, forKey: .faderDB) ?? 0
-        sendToVenue = try c.decodeIfPresent(Bool.self, forKey: .sendToVenue) ?? true
-    }
-}
+import SwiftUI
 
 /// Console tape colours; all light enough for dark ink. Pink stands in for red so a
 /// label never reads as "muted".
@@ -28,6 +10,20 @@ enum TapeColor: String, Codable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
     var label: String { rawValue.capitalized }
+}
+
+/// One entry in the source picker.
+struct SourceChoice {
+    var source: TrackSource
+    var title: String
+    var defaultName: String
+    var inUse: Bool
+    var note: String?
+}
+
+struct SourceChoices {
+    var transmitters: [SourceChoice]
+    var devices: [(name: String, options: [SourceChoice])]
 }
 
 @Observable @MainActor
@@ -39,15 +35,18 @@ final class AppModel {
     let recorder = Recorder()
     let streamDevice = StreamDevice()
     let updates = UpdateController()
-    @ObservationIgnored let meters = MeterBallistics()
+    let meters = MeterStore()
 
-    var strips: [StripSettings] {
-        didSet { pushToEngine(); save() }
+    /// Up to `Track.maximum` tracks, in strip order.
+    var tracks: [Track] {
+        didSet { tracksChanged(from: oldValue) }
     }
-    /// Mutes are deliberately not persisted: every launch starts with all mics live.
-    var muted: [Bool] = [false, false, false, false] {
+    /// Muted track IDs. Deliberately not persisted: every launch starts with all mics live.
+    var muted: Set<UUID> = [] {
         didSet { pushToEngine() }
     }
+    /// Bumped when a device's own input gain is changed, so strips re-read it.
+    private(set) var deviceGainRevision = 0
     var streamLevelDB: Double {
         didSet { engine.setStreamLevel(dB: streamLevelDB); UserDefaults.standard.set(streamLevelDB, forKey: "streamLevelDB") }
     }
@@ -62,16 +61,24 @@ final class AppModel {
     @ObservationIgnored private var keyMonitor: Any?
     @ObservationIgnored private var clickMonitor: Any?
     @ObservationIgnored private var terminationObserver: NSObjectProtocol?
+    @ObservationIgnored private var meterTimer: Timer?
 
     init() {
         let defaults = UserDefaults.standard
-        strips = defaults.data(forKey: "strips").flatMap { try? JSONDecoder().decode([StripSettings].self, from: $0) }
-            ?? (1...4).map { StripSettings(name: "Mic \($0)") }
+        if let saved = defaults.data(forKey: "tracks").flatMap({ try? JSONDecoder().decode([Track].self, from: $0) }) {
+            tracks = Array(saved.prefix(Track.maximum))
+        } else if let legacy = defaults.data(forKey: "strips").flatMap({ try? JSONDecoder().decode([LegacyStripSettings].self, from: $0) }) {
+            tracks = LegacyStripSettings.migrate(legacy)
+        } else {
+            tracks = Track.defaultSet()
+        }
         streamLevelDB = defaults.object(forKey: "streamLevelDB") as? Double ?? 0
         venueLevelDB = defaults.object(forKey: "venueLevelDB") as? Double ?? 0
         backupOnTransmitters = defaults.bool(forKey: "backupOnTransmitters")
 
+        engine.trackSources = tracks.map(\.source)
         pushToEngine()
+        save()
         engine.setStreamLevel(dB: streamLevelDB)
         engine.setVenueLevel(dB: venueLevelDB)
         engine.start()
@@ -96,6 +103,14 @@ final class AppModel {
         activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .latencyCritical], reason: "Live audio mixing")
         installMuteKeys()
         installClickToUnfocus()
+        let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.meters.update(self.engine.readMeters())
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        meterTimer = timer
         #if DEBUG
         DebugBridge.install(self)
         #endif
@@ -105,7 +120,7 @@ final class AppModel {
     /// Copies them once, on the first launch that finds no Lavboard settings yet.
     private static func migrateLegacySettings() {
         let defaults = UserDefaults.standard
-        guard defaults.object(forKey: "strips") == nil,
+        guard defaults.object(forKey: "strips") == nil, defaults.object(forKey: "tracks") == nil,
               let legacy = UserDefaults(suiteName: "com.sauerdev.djicontroller") else { return }
         let keys = ["strips", "streamLevelDB", "venueLevelDB", "backupOnTransmitters", "streamOutputUID",
                     "venueOutputUID", "bufferFrames", "recordingFolder", "recordingFormat"]
@@ -114,8 +129,110 @@ final class AppModel {
         }
     }
 
+    // MARK: Tracks
+
+    var canAddTrack: Bool { tracks.count < Track.maximum && !recorder.isRecording }
+    /// Tracks can't be added, removed or re-sourced mid-recording: the files are fixed at the start.
+    var canEditTracks: Bool { !recorder.isRecording }
+    var hasTransmitterTracks: Bool { tracks.contains { $0.source.transmitterSlot != nil } }
+
+    func isMuted(_ track: Track) -> Bool { muted.contains(track.id) }
+
+    /// A binding to one field of a track, looked up by ID on every access. Views never hold an
+    /// array index, so a control that is still closing after its track was removed (e.g. the name
+    /// field ending its edit) writes nowhere instead of crashing.
+    func binding<Value>(_ id: UUID, _ keyPath: WritableKeyPath<Track, Value>, fallback: Value) -> Binding<Value> {
+        Binding(
+            get: { [weak self] in
+                MainActor.assumeIsolated { self?.tracks.first(where: { $0.id == id })?[keyPath: keyPath] ?? fallback }
+            },
+            set: { [weak self] value in
+                MainActor.assumeIsolated {
+                    guard let self, let i = self.tracks.firstIndex(where: { $0.id == id }) else { return }
+                    self.tracks[i][keyPath: keyPath] = value
+                }
+            })
+    }
+
     func toggleMute(_ index: Int) {
-        muted[index].toggle()
+        guard tracks.indices.contains(index) else { return }
+        let id = tracks[index].id
+        if muted.contains(id) { muted.remove(id) } else { muted.insert(id) }
+    }
+
+    func addTrack(_ source: TrackSource, name: String) {
+        guard canAddTrack else { return }
+        tracks.append(Track(name: name, source: source))
+    }
+
+    func removeTrack(_ id: UUID) {
+        guard canEditTracks else { return }
+        tracks.removeAll { $0.id == id }
+    }
+
+    func setSource(_ source: TrackSource, for id: UUID) {
+        guard canEditTracks, let i = tracks.firstIndex(where: { $0.id == id }) else { return }
+        tracks[i].source = source
+        if !source.isStereo { tracks[i].balance = 0 }
+    }
+
+    /// Everything a track could use right now, marking sources other tracks already use.
+    func sourceChoices() -> SourceChoices {
+        let used = Set(tracks.map(\.source.identity))
+        var transmitters: [SourceChoice] = []
+        if engine.receiverDevice != nil || receiver.connected {
+            transmitters = (0..<4).map { slot in
+                let source = TrackSource.transmitter(slot: slot)
+                return SourceChoice(source: source, title: "TX\(slot + 1)", defaultName: "Mic \(slot + 1)",
+                                    inUse: used.contains(source.identity),
+                                    note: receiver.transmitters[slot]?.status == nil ? "Off" : nil)
+            }
+        }
+        let devices = engine.inputs.filter(\.canJoinEngine).map { device -> (name: String, options: [SourceChoice]) in
+            func choice(_ channel: Int, stereo: Bool, title: String) -> SourceChoice {
+                let source = TrackSource.device(uid: device.uid, name: device.name, channel: channel, stereo: stereo)
+                let name = Track.defaultName(deviceName: device.name, channel: channel, stereo: stereo, deviceChannels: device.inputChannels)
+                return SourceChoice(source: source, title: title, defaultName: name, inUse: used.contains(source.identity))
+            }
+            var options: [SourceChoice] = []
+            if device.inputChannels == 1 {
+                options.append(choice(0, stereo: false, title: "Mono input"))
+            } else {
+                for c in 0..<device.inputChannels { options.append(choice(c, stereo: false, title: "Input \(c + 1)")) }
+                for c in stride(from: 0, to: device.inputChannels - 1, by: 2) {
+                    options.append(choice(c, stereo: true, title: "Inputs \(c + 1) and \(c + 2), stereo"))
+                }
+            }
+            return (device.name, options)
+        }
+        return SourceChoices(transmitters: transmitters, devices: devices)
+    }
+
+    func sourceDescription(_ source: TrackSource) -> String {
+        switch source {
+        case .transmitter: "DJI receiver, \(source.channelLabel)"
+        case .device(_, let name, _, _): "\(name), \(source.channelLabel)"
+        }
+    }
+
+    /// The source device's own input gain, for devices that let apps change it.
+    func deviceGain(for track: Track) -> (value: Double, range: ClosedRange<Double>)? {
+        _ = deviceGainRevision
+        guard track.source.transmitterSlot == nil, let device = engine.device(for: track.source) else { return nil }
+        return CoreAudioHAL.inputGain(device.id)
+    }
+
+    func setDeviceGain(_ dB: Double, for track: Track) {
+        guard let device = engine.device(for: track.source), let current = CoreAudioHAL.inputGain(device.id) else { return }
+        CoreAudioHAL.setInputGain(device.id, dB: min(max(dB, current.range.lowerBound), current.range.upperBound))
+        deviceGainRevision += 1
+    }
+
+    private func tracksChanged(from old: [Track]) {
+        if tracks.map(\.source) != old.map(\.source) { engine.trackSources = tracks.map(\.source) }
+        muted = muted.intersection(tracks.map(\.id))
+        pushToEngine()
+        save()
     }
 
     var canRecord: Bool { engine.state == .running && !updates.isBusy }
@@ -125,7 +242,7 @@ final class AppModel {
             recorder.stop()
             if backupOnTransmitters { receiver.setTransmitterRecording(false) }
         } else {
-            recorder.start(core: engine.core, trackNames: strips.map(\.name))
+            recorder.start(core: engine.core, tracks: tracks.map { ($0.name, $0.source.isStereo ? 2 : 1) })
             if backupOnTransmitters && recorder.isRecording { receiver.setTransmitterRecording(true) }
         }
     }
@@ -137,17 +254,18 @@ final class AppModel {
     }
 
     private func pushToEngine() {
-        for (i, strip) in strips.enumerated() {
-            engine.setChannel(i, gainDB: strip.faderDB, muted: muted[i], venueSend: strip.sendToVenue)
+        for (i, track) in tracks.enumerated() {
+            engine.setTrack(i, gainDB: track.faderDB, muted: muted.contains(track.id),
+                            venueSend: track.sendToVenue, balance: track.balance)
         }
     }
 
     private func save() {
-        if let data = try? JSONEncoder().encode(strips) { UserDefaults.standard.set(data, forKey: "strips") }
+        if let data = try? JSONEncoder().encode(tracks) { UserDefaults.standard.set(data, forKey: "tracks") }
     }
 
     /// A click anywhere in the main window outside the field being edited ends editing,
-    /// so the 1-4 mute keys never end up typing into a name.
+    /// so the 1-8 mute keys never end up typing into a name.
     private func installClickToUnfocus() {
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             guard let window = event.window, window.canBecomeMain,
@@ -161,13 +279,13 @@ final class AppModel {
         }
     }
 
-    /// Number keys 1-4 toggle mutes, unless a text field is being edited.
+    /// Number keys 1-8 toggle mutes, unless a text field is being edited.
     private func installMuteKeys() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self,
                   !(NSApp.keyWindow?.firstResponder is NSTextView),
                   event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
-                  let key = event.charactersIgnoringModifiers, let n = Int(key), (1...4).contains(n)
+                  let key = event.charactersIgnoringModifiers, let n = Int(key), (1...Track.maximum).contains(n)
             else { return event }
             MainActor.assumeIsolated { self.toggleMute(n - 1) }
             return nil

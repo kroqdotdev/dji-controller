@@ -32,6 +32,8 @@ trap restore EXIT
 pkill -x Lavboard || true
 sleep 1
 defaults delete "$DOMAIN" streamOutputUID 2>/dev/null || true
+# Start from four tracks on TX1-TX4, whatever tracks you have set up.
+defaults delete "$DOMAIN" tracks 2>/dev/null || true
 open -n build/Build/Products/Debug/Lavboard.app
 
 connected=0
@@ -49,6 +51,8 @@ done
 /tmp/lavctl "label 3 yellow Panel"
 /tmp/lavctl "label 4 blue Q&A"
 /tmp/lavctl "mute 4"
+# Bring the window to the front so it is captured active, not dimmed.
+open build/Build/Products/Debug/Lavboard.app
 sleep 1
 say -v Samantha "Welcome back to the show. Tonight we are talking about live sound for small venues." &
 sleep 2.2

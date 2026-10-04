@@ -9,7 +9,7 @@ struct ContentView: View {
     var body: some View {
         let receiver = app.receiver
         VStack(spacing: 0) {
-            if receiver.connected, let mode = receiver.mode, mode != .quad, !receiver.switchingMode {
+            if app.hasTransmitterTracks, receiver.connected, let mode = receiver.mode, mode != .quad, !receiver.switchingMode {
                 ModeBanner(mode: mode)
             }
             Desk()
@@ -18,6 +18,7 @@ struct ContentView: View {
         .background(Console.background)
         .foregroundStyle(Console.silk)
         .preferredColorScheme(.dark)
+        .frame(minWidth: Desk.minimumWidth(tracks: app.tracks.count))
         .navigationTitle(title)
         .navigationSubtitle(subtitle)
         .toolbar {
@@ -62,19 +63,21 @@ struct ContentView: View {
 
     private var title: String {
         let receiver = app.receiver
+        guard app.hasTransmitterTracks || receiver.connected else { return "Lavboard" }
         if receiver.switchingMode { return "Receiver restarting" }
-        return receiver.connected ? "Receiver connected" : "Receiver not found"
+        return receiver.connected ? "Receiver connected" : "Receiver not connected"
     }
 
     /// The engine only takes over the subtitle when it needs attention.
     private var subtitle: String {
         if case .failed(let message) = app.engine.state { return message }
         if let warning = app.engine.warning { return warning }
-        return app.receiver.connected ? "\(app.receiver.connectedCount) of 4 mics on" : ""
+        let tracks = app.tracks.count == 1 ? "1 track" : "\(app.tracks.count) tracks"
+        guard app.hasTransmitterTracks, app.receiver.connected else { return tracks }
+        return "\(app.receiver.connectedCount) of 4 mics on, \(tracks)"
     }
 }
 
-/// Appears only when there is something to say about updates. One click installs and restarts.
 private struct UpdateButton: View {
     @Environment(AppModel.self) private var app
 
@@ -213,36 +216,62 @@ private struct ModeBanner: View {
 private struct Desk: View {
     @Environment(AppModel.self) private var app
 
+    /// Strip widths: roomy with few tracks, compact (labels become tooltips) when the desk is full.
+    static let stripRange: ClosedRange<CGFloat> = 112...196
+    static let compactBelow: CGFloat = 150
+    static let addSlotWidth: CGFloat = 96
+    static let masterWidth: CGFloat = 128
+    static let gap: CGFloat = 10
+
     var body: some View {
         @Bindable var app = app
         @Bindable var engine = app.engine
-        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
-            let meters = app.meters
-            let _ = meters.update(app.engine.readMeters(), now: context.date)
-            HStack(alignment: .top, spacing: 10) {
-                // Built directly rather than in a ForEach: a ForEach closure that only captures the
-                // (unchanging) meters reference is treated as unchanged and the strips never redraw.
-                ChannelStrip(index: 0, meter: meters.channels[0])
-                ChannelStrip(index: 1, meter: meters.channels[1])
-                ChannelStrip(index: 2, meter: meters.channels[2])
-                ChannelStrip(index: 3, meter: meters.channels[3])
+        GeometryReader { geo in
+            let canAdd = app.tracks.count < Track.maximum
+            let width = Self.stripWidth(available: geo.size.width, tracks: app.tracks.count, canAdd: canAdd)
+            let compact = width < Self.compactBelow
+            let anyStereo = app.tracks.contains { $0.source.isStereo }
+
+            HStack(alignment: .top, spacing: Self.gap) {
+                if app.tracks.isEmpty {
+                    EmptyDesk()
+                } else {
+                    ForEach(app.tracks) { track in
+                        TrackStrip(id: track.id, compact: compact, balanceRow: anyStereo)
+                            .frame(width: width)
+                    }
+                    if canAdd {
+                        AddTrackSlot().frame(width: Self.addSlotWidth)
+                    }
+                }
                 Spacer(minLength: 14)
-                MasterStrip(title: "Stream", meter: meters.channels[4], device: $engine.streamOutputUID,
+                MasterStrip(title: "Stream", meter: app.meters.stream, device: $engine.streamOutputUID,
                             level: $app.streamLevelDB, note: streamNote,
                             actionTitle: streamActionTitle, action: { app.streamDevice.install() })
-                MasterStrip(title: "Venue", meter: meters.channels[5], device: $engine.venueOutputUID,
+                MasterStrip(title: "Venue", meter: app.meters.venue, device: $engine.venueOutputUID,
                             level: $app.venueLevelDB, note: venueNote, excluding: StreamDevice.deviceUID)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
-            .opacity(app.receiver.connected ? 1 : 0.25)
-            .disabled(!app.receiver.connected)
-            .overlay {
-                if !app.receiver.connected {
-                    NoReceiver()
-                }
-            }
         }
+    }
+
+    /// Width of each track strip for the space available.
+    static func stripWidth(available: CGFloat, tracks: Int, canAdd: Bool) -> CGFloat {
+        let masters: CGFloat = 2 * masterWidth
+        let margins: CGFloat = 16 * 2 + 14
+        let addSlot: CGFloat = canAdd ? addSlotWidth + gap : 0
+        let gaps: CGFloat = gap * CGFloat(tracks + 1)
+        let perStrip: CGFloat = (available - masters - margins - addSlot - gaps) / CGFloat(max(tracks, 1))
+        return min(max(perStrip, stripRange.lowerBound), stripRange.upperBound)
+    }
+
+    /// The narrowest window that still fits every strip at its minimum width.
+    static func minimumWidth(tracks: Int) -> CGFloat {
+        let slots = CGFloat(max(tracks, 1))
+        let addSlot: CGFloat = tracks < Track.maximum ? addSlotWidth + gap : 0
+        let strips: CGFloat = slots * stripRange.lowerBound + gap * (slots + 1)
+        return strips + addSlot + 2 * masterWidth + 16 * 2 + 14
     }
 
     private var streamNote: String? {
@@ -275,17 +304,20 @@ private struct Desk: View {
     }
 }
 
-private struct NoReceiver: View {
+/// Shown when every track has been removed.
+private struct EmptyDesk: View {
+    @State private var picking = false
+
     var body: some View {
-        VStack(spacing: 8) {
-            Text("Plug in the DJI receiver")
-                .font(.system(size: 22, weight: .semibold))
-            Text("The mixer starts as soon as it's connected.")
+        VStack(spacing: 14) {
+            Text("Add a track to start mixing")
+                .font(.system(size: 20, weight: .semibold))
+            Text("Pick a DJI transmitter, a USB mic or any other input on this Mac.")
                 .font(.system(size: 13))
                 .foregroundStyle(Console.engraving)
+            AddTrackSlot().frame(width: 140, height: 120)
         }
-        .padding(28)
-        .background(RoundedRectangle(cornerRadius: Console.Radius.container).fill(Console.panel))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
