@@ -1,10 +1,10 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-/// DJI Mic Mini 2S support: the receiver's DUML control protocol over its USB vendor interface.
+/// DJI Mic Mini 2S support: the receiver's DUML control protocol over its `com.dji.mic` channel.
 let package = Package(
     name: "DJIMicMini2S",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v15), .iOS(.v17)],
     products: [.library(name: "DJIMicMini2S", targets: ["DJIMicMini2S"])],
     dependencies: [.package(path: "../MicSystemKit")],
     targets: [

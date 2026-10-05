@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import IOKit
 import IOUSBHost
@@ -29,7 +30,8 @@ public struct USBBulkInterface: Sendable {
 /// Opens a USB vendor interface with IOUSBHost, streams bytes from its bulk IN endpoint and writes
 /// to its bulk OUT endpoint. Reconnects by itself when the device re-enumerates (some receivers
 /// restart after a mode change). Callbacks arrive on a private queue; hop to the main actor.
-public final class USBBulkLink: @unchecked Sendable {
+/// macOS only: iOS apps can't open USB interfaces directly.
+public final class USBBulkLink: ControlLink, @unchecked Sendable {
     public var onConnect: ((_ productID: Int) -> Void)?
     public var onDisconnect: (() -> Void)?
     public var onBytes: (([UInt8]) -> Void)?
@@ -176,3 +178,4 @@ public final class USBBulkLink: @unchecked Sendable {
         interface = nil
     }
 }
+#endif

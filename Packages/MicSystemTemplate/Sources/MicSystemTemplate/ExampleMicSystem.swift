@@ -22,7 +22,7 @@ public final class ExampleMicSystem: MicSystem {
 
     public init() {}
 
-    /// Open the receiver's control interface here once there is one (see `USBBulkLink`).
+    /// Open the receiver's control channel here once there is one (see `ControlLink`).
     public func start() {}
 
     /// No control link yet, so the app doesn't claim to know which mics are on.

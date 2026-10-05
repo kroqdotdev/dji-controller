@@ -49,6 +49,18 @@ jobs:
             echo "::endgroup::"
           done
 
+      # The packages also build for iOS, where receivers' control channels go through External Accessory.
+      - name: Build mic system packages for iOS
+        run: |
+          for package in Packages/*/; do
+            name=$(basename "$package")
+            scheme=$name
+            if (cd "$package" && xcodebuild -list | grep -q "$name-Package"); then scheme="$name-Package"; fi
+            echo "::group::$package"
+            (cd "$package" && xcodebuild build -quiet -scheme "$scheme" -destination 'generic/platform=iOS Simulator' -derivedDataPath ../../build/packages-ios)
+            echo "::endgroup::"
+          done
+
       - name: Build Release
         run: >
           xcodebuild build

@@ -5,7 +5,7 @@ import PackageDescription
 /// rename the package, target and type. See CONTRIBUTING.md, "Adding a mic system".
 let package = Package(
     name: "MicSystemTemplate",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v15), .iOS(.v17)],
     products: [.library(name: "MicSystemTemplate", targets: ["MicSystemTemplate"])],
     dependencies: [.package(path: "../MicSystemKit")],
     targets: [
