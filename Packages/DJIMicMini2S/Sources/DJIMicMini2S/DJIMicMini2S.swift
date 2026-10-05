@@ -4,7 +4,8 @@ import Observation
 import os
 
 /// DJI Mic Mini 2S: up to four transmitters on one receiver, controlled over the receiver's
-/// `com.dji.mic` vendor USB interface with DJI's DUML protocol.
+/// `com.dji.mic` channel with DJI's DUML protocol. On macOS that channel is a vendor USB
+/// interface; on iOS it is an External Accessory protocol, which the app opens and passes in.
 ///
 /// Commands are spaced out because the receiver briefly drops transmitter records when several
 /// writes land within a few hundred milliseconds.
@@ -17,6 +18,8 @@ public final class DJIMicMini2S: MicSystem {
     static let vendorID = 0x2CA3
     /// 0x4015 in mono and stereo mode, 0x4115 in 4-track mode.
     static let productIDs = [0x4015, 0x4115]
+    /// The receiver's External Accessory protocol, for apps that pass an `ExternalAccessoryLink`.
+    public static let accessoryProtocol = "com.dji.mic"
 
     public static func isReceiver(_ device: AudioDeviceDescription) -> Bool {
         device.isUSB(vendor: vendorID, products: productIDs)
@@ -36,19 +39,37 @@ public final class DJIMicMini2S: MicSystem {
     }
 
     @ObservationIgnored private let log = Logger(subsystem: "com.sauerdev.lavboard", category: "dji-mic-mini-2s")
-    @ObservationIgnored private let link = USBBulkLink(
-        USBBulkInterface(vendorID: vendorID, productIDs: productIDs, interfaceNumber: 4,
-                         alternateSetting: 1, inEndpoint: 0x84, outEndpoint: 0x04),
-        label: "dji-mic-mini-2s")
+    @ObservationIgnored private let link: (any ControlLink)?
     @ObservationIgnored private var parser = DUMLParser()
     @ObservationIgnored private var seq: UInt16 = 0x4000
     @ObservationIgnored private var queue: [(key: String, payload: [UInt8])] = []
     @ObservationIgnored private var pumping = false
     @ObservationIgnored private var pendingSince: [Date?] = [nil, nil, nil, nil]
 
-    public init() {}
+    /// Uses the platform's own control link: the receiver's vendor USB interface on macOS. Elsewhere
+    /// the module runs audio-only unless the app passes a link to `init(link:)`.
+    public convenience init() {
+        self.init(link: Self.platformLink())
+    }
+
+    /// `link` reaches the receiver's `com.dji.mic` channel. Pass nil to run audio-only: tracks,
+    /// meters and mutes still work, but battery, gain, modes and settings stay hidden.
+    public init(link: (any ControlLink)?) {
+        self.link = link
+    }
+
+    private static func platformLink() -> (any ControlLink)? {
+        #if os(macOS)
+        USBBulkLink(USBBulkInterface(vendorID: vendorID, productIDs: productIDs, interfaceNumber: 4,
+                                     alternateSetting: 1, inEndpoint: 0x84, outEndpoint: 0x04),
+                    label: id)
+        #else
+        nil
+        #endif
+    }
 
     public func start() {
+        guard let link else { return }
         link.onConnect = { _ in Task { @MainActor in self.didConnect() } }
         link.onDisconnect = { Task { @MainActor in self.didDisconnect() } }
         link.onBytes = { bytes in Task { @MainActor in self.receive(bytes) } }
@@ -75,7 +96,9 @@ public final class DJIMicMini2S: MicSystem {
         (0..<Self.transmitterCount).contains(slot) ? slot : nil
     }
 
-    public var gain: GainCapability? { GainCapability(range: -12...12, step: 1) }
+    // Without a control link the module can't send anything, so it offers no controls at all.
+
+    public var gain: GainCapability? { link == nil ? nil : GainCapability(range: -12...12, step: 1) }
 
     public func setGain(_ dB: Double, slot: Int) {
         guard (0..<Self.transmitterCount).contains(slot) else { return }
@@ -85,7 +108,7 @@ public final class DJIMicMini2S: MicSystem {
         enqueue("gain.\(slot)", target: MicProtocol.slotMasks[slot], param: .gain, value: [UInt8(bitPattern: Int8(value))])
     }
 
-    public var canRecordOnTransmitters: Bool { true }
+    public var canRecordOnTransmitters: Bool { link != nil }
 
     /// Starts or stops the transmitters' internal 32-bit float recording on every connected slot.
     public func setTransmitterRecording(_ on: Bool) {
@@ -97,7 +120,9 @@ public final class DJIMicMini2S: MicSystem {
         }
     }
 
-    public var modes: [ReceiverMode] { ChannelMode.allCases.map { ReceiverMode(id: $0.id, name: $0.label) } }
+    public var modes: [ReceiverMode] {
+        link == nil ? [] : ChannelMode.allCases.map { ReceiverMode(id: $0.id, name: $0.label) }
+    }
     public var currentModeID: String? { linked ? status?.mode.id : nil }
     public var isSwitchingMode: Bool { switchingMode }
 
@@ -114,6 +139,7 @@ public final class DJIMicMini2S: MicSystem {
     }
 
     public var settings: [MicSetting] {
+        guard link != nil else { return [] }
         let first = slots.compactMap { $0?.status }.first
         return [
             MicSetting(id: "noise", title: "Noise cancellation",
@@ -124,7 +150,8 @@ public final class DJIMicMini2S: MicSystem {
     }
 
     public var settingsNote: String? {
-        slots.contains { $0?.status != nil } ? "Applies to every connected mic." : "Switch on a mic to change these."
+        guard link != nil else { return nil }
+        return slots.contains { $0?.status != nil } ? "Applies to every connected mic." : "Switch on a mic to change these."
     }
 
     public func set(_ settingID: String, to value: MicSettingValue) {
@@ -167,7 +194,7 @@ public final class DJIMicMini2S: MicSystem {
         seq &+= 1
         let frame = DUMLFrame(sender: MicProtocol.host, receiver: MicProtocol.receiverAddress, seq: seq,
                               type: 0x40, cmdSet: MicProtocol.cmdSet, cmdID: MicProtocol.cmdSetParam, payload: next.payload)
-        link.send(frame.encoded())
+        link?.send(frame.encoded())
         log.info("sent \(next.key, privacy: .public)")
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(150))

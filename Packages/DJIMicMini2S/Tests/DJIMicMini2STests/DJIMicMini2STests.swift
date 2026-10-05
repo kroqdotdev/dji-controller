@@ -49,10 +49,60 @@ struct DJIMicMini2STests {
         #expect(system.audioChannel(forSlot: 4) == nil)
     }
 
+    @Test func runsAudioOnlyWithoutALink() {
+        let system = DJIMicMini2S(link: nil)
+        system.start()
+        #expect(!system.isConnected)
+        #expect(system.currentModeID == nil)
+        #expect(system.transmitters.allSatisfy { !$0.connected })
+        #expect((0..<4).map(system.audioChannel(forSlot:)) == [0, 1, 2, 3])
+        // No link, no controls: the app hides gain, backup recording, modes and settings.
+        #expect(system.gain == nil)
+        #expect(!system.canRecordOnTransmitters)
+        #expect(system.modes.isEmpty)
+        #expect(system.settings.isEmpty && system.settingsNote == nil)
+    }
+
+    @Test func talksToTheReceiverOverTheLinkItIsGiven() async throws {
+        let link = FakeLink()
+        let system = DJIMicMini2S(link: link)
+        system.start()
+        #expect(link.started)
+
+        link.onConnect?(0)
+        for _ in 0..<100 where !system.isConnected { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(system.isConnected)
+
+        system.setGain(3, slot: 1)
+        let sent = try #require(link.sent.first.flatMap(DUMLFrame.init(bytes:)))
+        #expect(sent.cmdSet == MicProtocol.cmdSet && sent.cmdID == MicProtocol.cmdSetParam)
+        #expect(sent.payload == MicProtocol.setParamPayload(target: 0x02, param: .gain, value: [3]))
+
+        link.onBytes?(Self.statusPush)
+        for _ in 0..<100 where !system.transmitters[1].connected { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(system.transmitters[1].connected)
+
+        link.onDisconnect?()
+        for _ in 0..<100 where system.isConnected { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(!system.isConnected && system.transmitters.allSatisfy { !$0.connected })
+    }
+
     @Test func warnsBeforeARestartingModeSwitch() {
         let system = DJIMicMini2S()
         #expect(system.modes.map(\.id) == ["mono", "stereo", "quad"])
         #expect(system.modeSwitchWarning(to: "quad") != nil)
         #expect(system.modeSwitchWarning(to: "stereo") == nil)
     }
+}
+
+/// Plays the receiver's side of a control link and records what the module sends.
+private final class FakeLink: ControlLink {
+    var onConnect: ((_ productID: Int) -> Void)?
+    var onDisconnect: (() -> Void)?
+    var onBytes: (([UInt8]) -> Void)?
+    private(set) var started = false
+    private(set) var sent: [[UInt8]] = []
+
+    func start() { started = true }
+    func send(_ bytes: [UInt8]) { sent.append(bytes) }
 }
