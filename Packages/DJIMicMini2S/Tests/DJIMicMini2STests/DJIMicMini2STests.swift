@@ -56,6 +56,11 @@ struct DJIMicMini2STests {
         #expect(system.currentModeID == nil)
         #expect(system.transmitters.allSatisfy { !$0.connected })
         #expect((0..<4).map(system.audioChannel(forSlot:)) == [0, 1, 2, 3])
+        // No link, no controls: the app hides gain, backup recording, modes and settings.
+        #expect(system.gain == nil)
+        #expect(!system.canRecordOnTransmitters)
+        #expect(system.modes.isEmpty)
+        #expect(system.settings.isEmpty && system.settingsNote == nil)
     }
 
     @Test func talksToTheReceiverOverTheLinkItIsGiven() async throws {

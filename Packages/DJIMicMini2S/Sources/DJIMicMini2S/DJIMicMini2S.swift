@@ -96,7 +96,9 @@ public final class DJIMicMini2S: MicSystem {
         (0..<Self.transmitterCount).contains(slot) ? slot : nil
     }
 
-    public var gain: GainCapability? { GainCapability(range: -12...12, step: 1) }
+    // Without a control link the module can't send anything, so it offers no controls at all.
+
+    public var gain: GainCapability? { link == nil ? nil : GainCapability(range: -12...12, step: 1) }
 
     public func setGain(_ dB: Double, slot: Int) {
         guard (0..<Self.transmitterCount).contains(slot) else { return }
@@ -106,7 +108,7 @@ public final class DJIMicMini2S: MicSystem {
         enqueue("gain.\(slot)", target: MicProtocol.slotMasks[slot], param: .gain, value: [UInt8(bitPattern: Int8(value))])
     }
 
-    public var canRecordOnTransmitters: Bool { true }
+    public var canRecordOnTransmitters: Bool { link != nil }
 
     /// Starts or stops the transmitters' internal 32-bit float recording on every connected slot.
     public func setTransmitterRecording(_ on: Bool) {
@@ -118,7 +120,9 @@ public final class DJIMicMini2S: MicSystem {
         }
     }
 
-    public var modes: [ReceiverMode] { ChannelMode.allCases.map { ReceiverMode(id: $0.id, name: $0.label) } }
+    public var modes: [ReceiverMode] {
+        link == nil ? [] : ChannelMode.allCases.map { ReceiverMode(id: $0.id, name: $0.label) }
+    }
     public var currentModeID: String? { linked ? status?.mode.id : nil }
     public var isSwitchingMode: Bool { switchingMode }
 
@@ -135,6 +139,7 @@ public final class DJIMicMini2S: MicSystem {
     }
 
     public var settings: [MicSetting] {
+        guard link != nil else { return [] }
         let first = slots.compactMap { $0?.status }.first
         return [
             MicSetting(id: "noise", title: "Noise cancellation",
@@ -145,7 +150,8 @@ public final class DJIMicMini2S: MicSystem {
     }
 
     public var settingsNote: String? {
-        slots.contains { $0?.status != nil } ? "Applies to every connected mic." : "Switch on a mic to change these."
+        guard link != nil else { return nil }
+        return slots.contains { $0?.status != nil } ? "Applies to every connected mic." : "Switch on a mic to change these."
     }
 
     public func set(_ settingID: String, to value: MicSettingValue) {
