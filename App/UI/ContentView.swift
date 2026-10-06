@@ -267,7 +267,9 @@ private struct MicAccessBanner: View {
             banner("Lavboard can't hear any mic because microphone access is off. Turn it on in Privacy & Security, then reopen Lavboard.",
                    action: ("Open Privacy Settings", app.openMicrophoneSettings))
         case .unknown, .granted:
-            EmptyView()
+            if app.engine.waitingForAppAudioPermission {
+                banner("macOS is asking whether Lavboard may record app audio. Choose Allow so your app audio tracks can be heard; the mics keep running meanwhile.")
+            }
         }
     }
 

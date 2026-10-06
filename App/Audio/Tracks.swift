@@ -8,13 +8,29 @@ enum TrackSource: Hashable {
     /// A channel (or a stereo pair starting at `channel`) on any input device. `name` is cached
     /// so the strip can still say what is missing when the device is unplugged.
     case device(uid: String, name: String, channel: Int, stereo: Bool)
+    /// What one app plays, captured with a CoreAudio process tap. `name` is cached for when the
+    /// app isn't running.
+    case app(bundleID: String, name: String)
+    /// Everything playing on the Mac, except Lavboard and streaming apps.
+    case systemAudio
 
     /// Tracks saved before mic systems were modules all used the DJI Mic Mini 2S.
     static let legacySystemID = "dji-mic-mini-2s"
 
     var isStereo: Bool {
-        if case .device(_, _, _, let stereo) = self { return stereo }
-        return false
+        switch self {
+        case .device(_, _, _, let stereo): stereo
+        case .app, .systemAudio: true
+        case .transmitter: false
+        }
+    }
+
+    /// App and system audio, captured from other apps rather than from an input device.
+    var isTap: Bool {
+        switch self {
+        case .app, .systemAudio: true
+        case .transmitter, .device: false
+        }
     }
 
     var transmitter: (system: String, slot: Int)? {
@@ -27,6 +43,8 @@ enum TrackSource: Hashable {
         switch self {
         case .transmitter(let system, let slot): "\(system)#tx\(slot)"
         case .device(let uid, _, let channel, let stereo): "\(uid)#\(channel)#\(stereo)"
+        case .app(let bundleID, _): "app#\(bundleID)"
+        case .systemAudio: "system-audio"
         }
     }
 
@@ -37,13 +55,15 @@ enum TrackSource: Hashable {
             "TX\(slot + 1)"
         case .device(_, _, let channel, let stereo):
             stereo ? "In \(channel + 1)+\(channel + 2)" : "In \(channel + 1)"
+        case .app: "App audio"
+        case .systemAudio: "All apps"
         }
     }
 }
 
 extension TrackSource: Codable {
-    private enum Kind: String, CodingKey { case transmitter, device }
-    private enum Field: String, CodingKey { case system, slot, uid, name, channel, stereo }
+    private enum Kind: String, CodingKey { case transmitter, device, app, systemAudio }
+    private enum Field: String, CodingKey { case system, slot, uid, name, channel, stereo, bundleID }
 
     /// Same shape as the compiler would synthesize, e.g. {"transmitter":{"system":"...","slot":1}}.
     /// A transmitter without a system was saved before modules and belongs to the DJI Mic Mini 2S.
@@ -53,6 +73,11 @@ extension TrackSource: Codable {
             let t = try c.nestedContainer(keyedBy: Field.self, forKey: .transmitter)
             self = .transmitter(system: try t.decodeIfPresent(String.self, forKey: .system) ?? Self.legacySystemID,
                                 slot: try t.decode(Int.self, forKey: .slot))
+        } else if c.contains(.app) {
+            let a = try c.nestedContainer(keyedBy: Field.self, forKey: .app)
+            self = .app(bundleID: try a.decode(String.self, forKey: .bundleID), name: try a.decode(String.self, forKey: .name))
+        } else if c.contains(.systemAudio) {
+            self = .systemAudio
         } else {
             let d = try c.nestedContainer(keyedBy: Field.self, forKey: .device)
             self = .device(uid: try d.decode(String.self, forKey: .uid), name: try d.decode(String.self, forKey: .name),
@@ -73,6 +98,12 @@ extension TrackSource: Codable {
             try d.encode(name, forKey: .name)
             try d.encode(channel, forKey: .channel)
             try d.encode(stereo, forKey: .stereo)
+        case .app(let bundleID, let name):
+            var a = c.nestedContainer(keyedBy: Field.self, forKey: .app)
+            try a.encode(bundleID, forKey: .bundleID)
+            try a.encode(name, forKey: .name)
+        case .systemAudio:
+            _ = c.nestedContainer(keyedBy: Field.self, forKey: .systemAudio)
         }
     }
 }

@@ -1,3 +1,4 @@
+import AppKit
 import CoreAudio
 import Foundation
 import MicSystemKit
@@ -84,6 +85,17 @@ final class AudioEngine {
     private var rateRequested: Set<String> = []
     /// The rate each running own-clock capture was built for, by device UID.
     private var ownClockRates: [String: Double] = [:]
+    /// App and system audio taps for the current tracks, kept in step with running processes.
+    private var tapSpecs: [TapSpec] = []
+    /// Whether the app behind each app-audio track (by source identity) is running.
+    private(set) var appRunning: [String: Bool] = [:]
+    /// True while app audio capture has been starting for over a second: macOS is asking whether
+    /// Lavboard may record app audio.
+    private(set) var waitingForAppAudioPermission = false
+    /// Each running tap's capture device and the rate it was built for.
+    private var tapRates: [AudioObjectID: Double] = [:]
+    private var tapRateListeners: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
+    private var processListener: AudioObjectPropertyListenerBlock?
     @ObservationIgnored private var lastOwnClockStats: [(name: String, rate: Double, stats: AudioCoreAsyncStats)] = []
 
     init() {
@@ -102,6 +114,16 @@ final class AudioEngine {
         guard !started else { return }
         started = true
         installListeners()
+        // An app-audio track says "Not running" while its app is closed.
+        let workspace = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, !self.tapSpecs.isEmpty else { return }
+                    self.appRunning = self.running(self.tapSpecs)
+                }
+            }
+        }
         scheduleRebuild(force: true)
     }
 
@@ -124,6 +146,59 @@ final class AudioEngine {
         restartListener = onRestart
         AudioObjectAddPropertyListenerBlock(system, &devices, DispatchQueue.main, onDevices)
         AudioObjectAddPropertyListenerBlock(system, &restarted, DispatchQueue.main, onRestart)
+
+        var processes = CoreAudioHAL.address(kAudioHardwarePropertyProcessObjectList)
+        if let processListener { AudioObjectRemovePropertyListenerBlock(system, &processes, DispatchQueue.main, processListener) }
+        let onProcesses: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            Task { @MainActor in self?.processesChanged() }
+        }
+        processListener = onProcesses
+        AudioObjectAddPropertyListenerBlock(system, &processes, DispatchQueue.main, onProcesses)
+    }
+
+    /// The taps the current tracks need, with the processes each one covers right now.
+    private func currentTapSpecs() -> [TapSpec] {
+        let taps = trackSources.filter(\.isTap)
+        guard !taps.isEmpty else { return [] }
+        let processes = AppAudio.processes()
+        let apps = AppAudio.apps(from: processes)
+        var specs: [TapSpec] = []
+        for source in taps where !specs.contains(where: { $0.identity == source.identity }) {
+            switch source {
+            case .app(let bundleID, let name):
+                specs.append(TapSpec(identity: source.identity, name: name, global: false,
+                                     processes: apps.first { $0.bundleID == bundleID }?.processes ?? []))
+            case .systemAudio:
+                // Never Lavboard itself (its outputs carry the mix) or apps that play the stream back.
+                let excluded = [AppAudio.ownProcess(in: processes)].compactMap { $0 }
+                    + apps.filter { AppAudio.streamingApps.contains($0.bundleID) }.flatMap(\.processes)
+                specs.append(TapSpec(identity: source.identity, name: "Mac audio", global: true, processes: excluded))
+            case .transmitter, .device:
+                break
+            }
+        }
+        return specs
+    }
+
+    /// Apps start and stop playing all the time (a browser opens a process per tab). Running taps
+    /// take the new process lists in place, without rebuilding the engine, so mics never drop out.
+    private func processesChanged() {
+        guard !tapSpecs.isEmpty else { return }
+        let specs = currentTapSpecs()
+        guard specs.map(\.identity) == tapSpecs.map(\.identity), specs != tapSpecs else { return }
+        tapSpecs = specs
+        appRunning = running(specs)
+        session.queue.async { self.session.updateTaps(specs) }
+    }
+
+    /// Whether each app-audio track's app is open (it may be open but silent, with no audio processes).
+    private func running(_ specs: [TapSpec]) -> [String: Bool] {
+        var running: [String: Bool] = [:]
+        for case .app(let bundleID, _) in trackSources {
+            running[TrackSource.app(bundleID: bundleID, name: "").identity] =
+                !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
+        }
+        return running
     }
 
     private func audioServiceRestarted() {
@@ -173,6 +248,7 @@ final class AudioEngine {
         switch source {
         case .transmitter(let system, _): receivers[system]
         case .device(let uid, _, _, _): inputs.first { $0.uid == uid }
+        case .app, .systemAudio: nil
         }
     }
 
@@ -208,6 +284,8 @@ final class AudioEngine {
             guard let device = inputs.first(where: { $0.uid == uid }),
                   channel >= 0, channel + (stereo ? 1 : 0) < device.usableInputChannels else { return nil }
             return Resolved(device: device, channel: channel, stereo: stereo)
+        case .app, .systemAudio:
+            return nil // captured with taps instead; see currentTapSpecs
         }
     }
 
@@ -250,8 +328,32 @@ final class AudioEngine {
             let stale = inputs.contains { device in
                 guard let built = ownClockRates[device.uid] else { return false }
                 return CoreAudioHAL.inputRate(device.id) != built
-            }
+            } || tapRates.contains { CoreAudioHAL.inputRate($0.key) != $0.value }
             if stale { scheduleRebuild(force: true) }
+        }
+    }
+
+    /// Clock for the taps' capture devices: the default output if it has no inputs of its own (they
+    /// would come before the tap's channels), else the built-in output, else any output-only device.
+    private func tapClockUID() -> String? {
+        let outputOnly = outputs.filter { $0.inputChannels == 0 }
+        let defaultUID = CoreAudioHAL.defaultOutputUID()
+        return (outputOnly.first { $0.uid == defaultUID }
+            ?? outputOnly.first { $0.transportType == kAudioDeviceTransportTypeBuiltIn }
+            ?? outputOnly.first)?.uid
+    }
+
+    /// Listens for rate changes on the running taps' capture devices (replacing the previous build's).
+    private func watchTapRates(_ rates: [AudioObjectID: Double]) {
+        var addr = CoreAudioHAL.address(kAudioDevicePropertyNominalSampleRate)
+        for (id, block) in tapRateListeners { AudioObjectRemovePropertyListenerBlock(id, &addr, DispatchQueue.main, block) }
+        tapRateListeners = [:]
+        tapRates = rates
+        for id in rates.keys {
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                Task { @MainActor in self?.scheduleRateCheck() }
+            }
+            if AudioObjectAddPropertyListenerBlock(id, &addr, DispatchQueue.main, block) == noErr { tapRateListeners[id] = block }
         }
     }
 
@@ -266,7 +368,7 @@ final class AudioEngine {
     }
 
     private func rebuildIfNeeded(force: Bool) {
-        let all = CoreAudioHAL.devices()
+        let all = CoreAudioHAL.devices(skipping: session.ownedDevices())
         let receiverOf = { (device: AudioDeviceInfo) in
             self.micSystems.first { type(of: $0).isReceiver(device.description) }.map { type(of: $0).id }
         }
@@ -286,7 +388,8 @@ final class AudioEngine {
         }
 
         let resolved = trackSources.map(resolve)
-        trackAvailable = resolved.map { $0 != nil }
+        // App audio is always there: a tap follows the app as it starts and stops playing.
+        trackAvailable = zip(trackSources, resolved).map { $0.isTap || $1 != nil }
         if preferRates(resolved.compactMap { $0 }) {
             scheduleRebuild(force: true, after: .milliseconds(300))
             return
@@ -294,9 +397,16 @@ final class AudioEngine {
         let ownClock = Self.unique(resolved.compactMap { $0 }.filter(\.ownClock).map(\.device))
         watchRates(of: ownClock)
         let clock = clockDevice(venue: venue, stream: stream)
-        let newSignature = (resolved.map { r in
-            r.map { "\($0.device.uid)|\($0.device.inputChannels)|\($0.channel)|\($0.stereo)|\($0.ownClock)" } ?? "-"
-        } + [venue?.uid ?? "-", stream?.uid ?? "-", clock?.uid ?? "-", String(bufferFrames)]).joined(separator: "#")
+        let taps = currentTapSpecs()
+        // A tap's capture device is clocked by the default output, so a new default rebuilds it.
+        let tapClock = taps.isEmpty ? nil : tapClockUID()
+        let trackParts: [String] = zip(trackSources, resolved).map { source, r in
+            if source.isTap { return "tap:\(source.identity)" }
+            guard let r else { return "-" }
+            return "\(r.device.uid)|\(r.device.inputChannels)|\(r.channel)|\(r.stereo)|\(r.ownClock)"
+        }
+        let routing: [String] = [venue?.uid ?? "-", stream?.uid ?? "-", clock?.uid ?? "-", tapClock ?? "-", String(bufferFrames)]
+        let newSignature = (trackParts + routing).joined(separator: "#")
         guard force || newSignature != signature else {
             if appliedGeneration == buildGeneration { layoutPending = false }
             return
@@ -313,13 +423,16 @@ final class AudioEngine {
             if receivers.values.contains(where: { $0.uid == r.device.uid }) { receiverDevices.append(r.device) } else { otherDevices.append(r.device) }
         }
         let devices = receiverDevices + otherDevices
-        guard !devices.isEmpty || !ownClock.isEmpty else {
+        tapSpecs = taps
+        appRunning = running(taps)
+        guard !devices.isEmpty || !ownClock.isEmpty || !taps.isEmpty else {
             session.queue.async { self.session.teardown() }
             state = trackSources.isEmpty ? .idle : .waitingForInputs
             venueLatencyMs = nil
             buildWarning = nil
             trackLatencyMs = trackSources.map { _ in nil }
             ownClockRates = [:]
+            watchTapRates([:])
             appliedGeneration = generation
             layoutPending = false
             return
@@ -331,10 +444,26 @@ final class AudioEngine {
             clock: devices.isEmpty ? clock : nil,
             tracks: resolved.map { $0.map { (uid: $0.device.uid, channel: $0.channel, stereo: $0.stereo, ownClock: $0.ownClock) } },
             trackIDs: trackIDs, controls: controls,
+            taps: taps, tapClockUID: tapClock,
+            trackTaps: trackSources.map { source in source.isTap ? taps.firstIndex { $0.identity == source.identity } : nil },
             venue: venue, stream: stream, bufferFrames: bufferFrames, core: core)
         session.queue.async {
             let result = self.session.build(config)
             Task { @MainActor in self.apply(result, generation: generation) }
+            // Taps attach after the engine reports running: attaching can wait on the permission
+            // question about recording app audio, and the mics and Record shouldn't wait with it.
+            guard case .success = result, !config.taps.isEmpty else { return }
+            let attached = OSAllocatedUnfairLock(initialState: false)
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1))
+                if !attached.withLock({ $0 }) { self.waitingForAppAudioPermission = true }
+            }
+            let problems = self.session.attachTaps()
+            attached.withLock { $0 = true }
+            Task { @MainActor in
+                self.waitingForAppAudioPermission = false
+                if generation == self.buildGeneration, let problem = problems.first { self.buildWarning = problem }
+            }
         }
     }
 
@@ -350,6 +479,7 @@ final class AudioEngine {
             venueLatencyMs = info.venueLatencyMs
             trackLatencyMs = info.trackLatencyMs
             ownClockRates = info.ownClockRates
+            watchTapRates(info.tapRates)
             buildWarning = info.problems.first
             log.info("engine running: \(info.inputDevices) input devices, buffer \(info.bufferFrames), venue \(info.venueLatencyMs ?? -1) ms")
         case .failure(let failure):
@@ -357,6 +487,7 @@ final class AudioEngine {
             buildWarning = nil
             trackLatencyMs = trackSources.map { _ in nil }
             ownClockRates = [:]
+            watchTapRates([:])
             log.error("engine failed: \(failure.message, privacy: .public)")
         }
     }
@@ -393,6 +524,11 @@ final class EngineSession: @unchecked Sendable {
         /// The tracks behind `tracks`, so their settings move with them into the new layout.
         var trackIDs: [UUID]
         var controls: TrackControls
+        /// App and system audio to capture, and the output device that clocks their capture.
+        var taps: [TapSpec]
+        var tapClockUID: String?
+        /// Per track: the index into `taps` for app and system audio tracks.
+        var trackTaps: [Int?]
         var venue: AudioDeviceInfo?
         var stream: AudioDeviceInfo?
         var bufferFrames: UInt32
@@ -409,6 +545,8 @@ final class EngineSession: @unchecked Sendable {
         var problems: [String]
         /// The rate each own-clock capture runs at, by device UID.
         var ownClockRates: [String: Double]
+        /// Each tap's capture device and the rate it runs at.
+        var tapRates: [AudioObjectID: Double]
     }
 
     struct Failure: Error {
@@ -424,10 +562,29 @@ final class EngineSession: @unchecked Sendable {
         var latencyMs: Double
     }
 
+    /// App or system audio: a process tap in a private aggregate device of its own, whose IOProc
+    /// fills `source` like a device on its own clock.
+    private struct TapCapture {
+        var identity: String
+        var name: String
+        var tap: AudioObjectID
+        var aggregate: AudioObjectID
+        /// Created after the mixer starts: it waits for permission to record app audio.
+        var proc: AudioDeviceIOProcID?
+        var source: OpaquePointer
+        var rate: Double
+        /// The tap's left channel in the capture device's input (anything before it belongs to the clock).
+        var channelOffset: Int
+        var latencyMs: Double
+    }
+
     let queue = DispatchQueue(label: "com.sauerdev.lavboard.engine")
+    /// Aggregate devices this session created, readable from any thread so device scans can skip them.
+    private let owned = OSAllocatedUnfairLock(initialState: Set<AudioObjectID>())
     private var aggregate: AudioObjectID = 0
     private var procID: AudioDeviceIOProcID?
     private var ownClock: [OwnClock] = []
+    private var taps: [TapCapture] = []
     private var core: OpaquePointer?
 
     func build(_ config: Config) -> Result<Info, Failure> {
@@ -460,6 +617,8 @@ final class EngineSession: @unchecked Sendable {
         let status = AudioHardwareCreateAggregateDevice(description as CFDictionary, &id)
         guard status == noErr, id != 0 else { return .failure(Failure(message: "Couldn't create the audio engine (\(status)).")) }
         aggregate = id
+        let created = id
+        owned.withLock { _ = $0.insert(created) }
 
         // The aggregate's streams appear asynchronously.
         let map = members.map { device in
@@ -506,11 +665,30 @@ final class EngineSession: @unchecked Sendable {
                 problems.append("\(device.name) couldn't start, so its track is silent.")
             }
         }
+        // App and system audio. Their capture starts once the engine runs (see `attachTaps`), so
+        // that if macOS is still asking whether Lavboard may record app audio, the mics don't wait.
+        var tapByIndex: [(capture: TapCapture, source: Int)?] = []
+        for spec in config.taps {
+            if let capture = makeTap(spec, clockUID: config.tapClockUID, mixerBuffer: config.bufferFrames) {
+                tapByIndex.append((capture, sources.count))
+                taps.append(capture)
+                sources.append(capture.source)
+            } else {
+                tapByIndex.append(nil)
+                problems.append("Couldn't capture \(spec.name), so its track is silent.")
+            }
+        }
 
         let silent = { (stereo: Bool) in
             AudioCoreTrackLayout(buffer: -1, channel: -1, bufferRight: -1, channelRight: -1, stereo: stereo, asyncSource: -1)
         }
-        let layouts: [AudioCoreTrackLayout] = config.tracks.map { track in
+        let layouts: [AudioCoreTrackLayout] = config.tracks.enumerated().map { i, track in
+            if let tap = config.trackTaps[i] {
+                guard let entry = tapByIndex[tap] else { return silent(true) }
+                let left = entry.capture.channelOffset
+                return AudioCoreTrackLayout(buffer: -1, channel: Int32(left), bufferRight: -1, channelRight: Int32(left + 1),
+                                            stereo: true, asyncSource: Int32(entry.source))
+            }
             guard let track else { return silent(false) }
             if track.ownClock {
                 guard let index = sourceIndex[track.uid] else { return silent(track.stereo) }
@@ -565,13 +743,17 @@ final class EngineSession: @unchecked Sendable {
                 + CoreAudioHAL.fixedLatencyFrames(venue.id, kAudioObjectPropertyScopeOutput) + 2 * buffer
             return Double(frames) / 48.0
         }
-        let trackLatency: [Double?] = config.tracks.map { track in
+        let trackLatency: [Double?] = config.tracks.enumerated().map { i, track in
+            if let tap = config.trackTaps[i] {
+                return tapByIndex[tap].map { max(0, $0.capture.latencyMs - clockedInputMs) }
+            }
             guard let track, track.ownClock, let own = ownClock.first(where: { $0.device.uid == track.uid }) else { return nil }
             return max(0, own.latencyMs - clockedInputMs)
         }
         return .success(Info(inputDevices: config.inputs.count + ownClock.count, bufferFrames: buffer,
                              venueLatencyMs: venueIndex >= 0 ? venueMs : nil, trackLatencyMs: trackLatency, problems: problems,
-                             ownClockRates: Dictionary(ownClock.map { ($0.device.uid, $0.rate) }, uniquingKeysWith: { a, _ in a })))
+                             ownClockRates: Dictionary(ownClock.map { ($0.device.uid, $0.rate) }, uniquingKeysWith: { a, _ in a }),
+                             tapRates: Dictionary(taps.map { ($0.aggregate, $0.rate) }, uniquingKeysWith: { a, _ in a })))
     }
 
     /// Starts capturing a device on its own clock.
@@ -654,10 +836,101 @@ final class EngineSession: @unchecked Sendable {
     }
 
     func ownClockStats() -> [(name: String, rate: Double, stats: AudioCoreAsyncStats)] {
-        ownClock.map { own in
+        let devices = ownClock.map { own in
             var stats = AudioCoreAsyncStats()
             AudioCoreAsyncReadStats(own.source, &stats)
             return (own.device.name, own.rate, stats)
+        }
+        let captures = taps.map { capture in
+            var stats = AudioCoreAsyncStats()
+            AudioCoreAsyncReadStats(capture.source, &stats)
+            return ("\(capture.name) (tap)", capture.rate, stats)
+        }
+        return devices + captures
+    }
+
+    /// Creates a tap for `spec` in a private aggregate device clocked by `clockUID`, and the async
+    /// source its IOProc will fill. The IOProc is attached once the mixer is running.
+    private func makeTap(_ spec: TapSpec, clockUID: String?, mixerBuffer: UInt32) -> TapCapture? {
+        let description = spec.description()
+        var tap = AudioObjectID(0)
+        guard AudioHardwareCreateProcessTap(description, &tap) == noErr, tap != 0 else { return nil }
+        let tapUID = CoreAudioHAL.string(tap, kAudioTapPropertyUID) ?? description.uuid.uuidString
+        var composition: [String: Any] = [
+            kAudioAggregateDeviceNameKey: "Lavboard \(spec.name)",
+            kAudioAggregateDeviceUIDKey: "\(Self.uidPrefix).tap.\(UUID().uuidString)",
+            kAudioAggregateDeviceIsPrivateKey: 1,
+            kAudioAggregateDeviceIsStackedKey: 0,
+            kAudioAggregateDeviceTapListKey: [[kAudioSubTapUIDKey: tapUID, kAudioSubTapDriftCompensationKey: 1]],
+        ]
+        if let clockUID {
+            composition[kAudioAggregateDeviceMainSubDeviceKey] = clockUID
+            composition[kAudioAggregateDeviceSubDeviceListKey] = [[kAudioSubDeviceUIDKey: clockUID]]
+        }
+        var aggregate = AudioObjectID(0)
+        guard AudioHardwareCreateAggregateDevice(composition as CFDictionary, &aggregate) == noErr, aggregate != 0 else {
+            AudioHardwareDestroyProcessTap(tap)
+            return nil
+        }
+        let device = aggregate
+        owned.withLock { _ = $0.insert(device) }
+        func fail() -> TapCapture? {
+            owned.withLock { _ = $0.remove(device) }
+            AudioHardwareDestroyAggregateDevice(device)
+            AudioHardwareDestroyProcessTap(tap)
+            return nil
+        }
+        // Like the engine's aggregate, its streams appear asynchronously.
+        var channels = 0
+        for _ in 0..<50 {
+            channels = CoreAudioHAL.bufferLayout(aggregate, kAudioObjectPropertyScopeInput).reduce(0, +)
+            if channels >= 2 { break }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        CoreAudioHAL.setUInt32(aggregate, kAudioDevicePropertyBufferFrameSize, 256)
+        let rate = CoreAudioHAL.inputRate(aggregate)
+        // The tap's stereo pair is the aggregate's last two input channels.
+        guard rate > 0, channels >= 2, channels <= Int(AC_ASYNC_MAX_CHANNELS) else { return fail() }
+        let buffer = Double(CoreAudioHAL.uint32(aggregate, kAudioDevicePropertyBufferFrameSize))
+        let headroom = 1.5 * buffer + 2 * Double(mixerBuffer) * rate / 48_000 + 0.002 * rate
+        guard let source = AudioCoreAsyncCreate(Int32(channels), rate, 48_000, UInt32(headroom.rounded(.up))) else { return fail() }
+        let latency = (buffer + headroom + Double(AudioCoreAsyncLookahead(source))) / rate * 1000
+        return TapCapture(identity: spec.identity, name: spec.name, tap: tap, aggregate: aggregate, proc: nil, source: source,
+                          rate: rate, channelOffset: channels - 2, latencyMs: latency)
+    }
+
+    /// Starts capturing the taps created by the last build. Creating a tap's IOProc waits until
+    /// macOS has an answer about recording app audio, so the engine calls this once it is running.
+    func attachTaps() -> [String] {
+        var problems: [String] = []
+        for i in taps.indices where taps[i].proc == nil {
+            var proc: AudioDeviceIOProcID?
+            let capture = taps[i]
+            if AudioDeviceCreateIOProcID(capture.aggregate, AudioCoreAsyncIOProc, UnsafeMutableRawPointer(capture.source), &proc) == noErr,
+               let proc, AudioDeviceStart(capture.aggregate, proc) == noErr {
+                taps[i].proc = proc
+            } else {
+                if let proc { AudioDeviceDestroyIOProcID(capture.aggregate, proc) }
+                problems.append("Couldn't capture \(capture.name), so its track is silent.")
+            }
+        }
+        return problems
+    }
+
+    /// Points running taps at new process lists in place, without stopping anything.
+    func updateTaps(_ specs: [TapSpec]) {
+        for spec in specs {
+            guard let capture = taps.first(where: { $0.identity == spec.identity }) else { continue }
+            var addr = CoreAudioHAL.address(kAudioTapPropertyDescription)
+            var size = UInt32(MemoryLayout<Unmanaged<CATapDescription>>.size)
+            var current: Unmanaged<CATapDescription>?
+            guard AudioObjectGetPropertyData(capture.tap, &addr, 0, nil, &size, &current) == noErr, let current else { continue }
+            let description = current.takeRetainedValue()
+            description.processes = spec.processes
+            // The property holds an object reference: pass a pointer to it.
+            var reference = Unmanaged.passUnretained(description)
+            let status = AudioObjectSetPropertyData(capture.tap, &addr, 0, nil, UInt32(MemoryLayout<Unmanaged<CATapDescription>>.size), &reference)
+            if status != noErr { log.error("couldn't update the \(spec.name, privacy: .public) tap: \(status)") }
         }
     }
 
@@ -667,6 +940,12 @@ final class EngineSession: @unchecked Sendable {
         procID = nil
         aggregate = 0
         ownClock = []
+        taps = []
+        owned.withLock { $0.removeAll() }
+    }
+
+    func ownedDevices() -> Set<AudioObjectID> {
+        owned.withLock { $0 }
     }
 
     func teardown() {
@@ -677,6 +956,7 @@ final class EngineSession: @unchecked Sendable {
         procID = nil
         if aggregate != 0 {
             AudioHardwareDestroyAggregateDevice(aggregate)
+            owned.withLock { _ = $0.remove(aggregate) }
             aggregate = 0
         }
         // The mixer has stopped; once each device's IOProc is destroyed nothing touches the sources.
@@ -684,8 +964,19 @@ final class EngineSession: @unchecked Sendable {
             AudioDeviceStop(own.device.id, own.proc)
             AudioDeviceDestroyIOProcID(own.device.id, own.proc)
         }
+        for capture in taps {
+            if let proc = capture.proc {
+                AudioDeviceStop(capture.aggregate, proc)
+                AudioDeviceDestroyIOProcID(capture.aggregate, proc)
+            }
+            AudioHardwareDestroyAggregateDevice(capture.aggregate)
+            AudioHardwareDestroyProcessTap(capture.tap)
+            owned.withLock { _ = $0.remove(capture.aggregate) }
+        }
         if let core { AudioCoreSetAsyncSources(core, nil, 0) }
         for own in ownClock { AudioCoreAsyncDestroy(own.source) }
+        for capture in taps { AudioCoreAsyncDestroy(capture.source) }
         ownClock = []
+        taps = []
     }
 }

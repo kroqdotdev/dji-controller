@@ -26,6 +26,8 @@ struct SourceChoice {
 struct SourceChoices {
     /// Transmitter slots, grouped by mic system.
     var systems: [(id: String, name: String, options: [SourceChoice])]
+    /// All Mac audio, then each running app that has opened audio.
+    var appAudio: [SourceChoice]
     /// Keyed by UID: two identical USB mics share a name. `note` explains a device on its own clock.
     var devices: [(uid: String, name: String, note: String?, options: [SourceChoice])]
 }
@@ -246,9 +248,10 @@ final class AppModel {
 
     func addTrack(_ source: TrackSource, name: String) {
         guard canAddTrack else { return }
-        // A Bluetooth mic lags far behind the room, so it stays off the venue PA unless asked.
+        // A Bluetooth mic lags far behind the room, so it stays off the venue PA unless asked; app
+        // audio already plays on the Mac, and often through the same speakers as the venue.
         let bluetooth = engine.device(for: source)?.isBluetooth ?? false
-        tracks.append(Track(name: name, sendToVenue: !bluetooth, source: source))
+        tracks.append(Track(name: name, sendToVenue: !bluetooth && !source.isTap, source: source))
     }
 
     func removeTrack(_ id: UUID) {
@@ -302,7 +305,14 @@ final class AppModel {
             }
             return (device.uid, device.name, Self.ownClockNote(device), options)
         }
-        return SourceChoices(systems: systems, devices: devices)
+        var appAudio = [SourceChoice(source: .systemAudio, title: "All Mac audio", defaultName: "Mac audio",
+                                     inUse: used.contains(TrackSource.systemAudio.identity))]
+        for app in AppAudio.apps(from: AppAudio.processes()) where !AppAudio.streamingApps.contains(app.bundleID) {
+            let source = TrackSource.app(bundleID: app.bundleID, name: app.name)
+            appAudio.append(SourceChoice(source: source, title: app.name, defaultName: app.name,
+                                         inUse: used.contains(source.identity), note: app.playing ? "Playing" : nil))
+        }
+        return SourceChoices(systems: systems, appAudio: appAudio, devices: devices)
     }
 
     /// What to expect from a device that can't run on the engine's 48 kHz clock.
@@ -324,6 +334,8 @@ final class AppModel {
         switch source {
         case .transmitter(let system, _): "\(micSystem(id: system).map { type(of: $0).name } ?? "Wireless receiver"), \(source.channelLabel)"
         case .device(_, let name, _, _): "\(name), \(source.channelLabel)"
+        case .app(_, let name): "\(name), app audio"
+        case .systemAudio: "All Mac audio"
         }
     }
 

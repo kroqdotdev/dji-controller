@@ -80,11 +80,20 @@ struct TrackTests {
 
     @Test func transmitterSourcesRoundTripWithTheirSystem() throws {
         let sources: [TrackSource] = [.transmitter(system: "rode-wireless-pro", slot: 1),
-                                      .device(uid: "u1", name: "C922", channel: 0, stereo: true)]
+                                      .device(uid: "u1", name: "C922", channel: 0, stereo: true),
+                                      .app(bundleID: "com.spotify.client", name: "Spotify"),
+                                      .systemAudio]
         let json = try JSONEncoder().encode(sources)
         #expect(try JSONDecoder().decode([TrackSource].self, from: json) == sources)
         #expect(String(decoding: json, as: UTF8.self).contains(#""system":"rode-wireless-pro""#))
         // The same slot on two systems is two different sources.
         #expect(TrackSource.transmitter(system: "a", slot: 0).identity != TrackSource.transmitter(system: "b", slot: 0).identity)
+    }
+
+    @Test func appAndSystemAudioAreStereoTaps() {
+        let app = TrackSource.app(bundleID: "us.zoom.xos", name: "Zoom")
+        #expect(app.isStereo && app.isTap && TrackSource.systemAudio.isTap)
+        #expect(!TrackSource.transmitter(system: "x", slot: 0).isTap)
+        #expect(app.identity != TrackSource.systemAudio.identity)
     }
 }
