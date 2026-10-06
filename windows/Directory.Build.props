@@ -1,0 +1,16 @@
+<Project>
+  <!-- Settings shared by every .NET project in the Windows app. -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)artifacts\bin\$(MSBuildProjectName)\</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)artifacts\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <!-- The native engine is built per platform; AnyCPU projects use the x64 build. -->
+    <EnginePlatform Condition="'$(Platform)' == 'ARM64'">ARM64</EnginePlatform>
+    <EnginePlatform Condition="'$(EnginePlatform)' == ''">x64</EnginePlatform>
+    <EngineDir>$(MSBuildThisFileDirectory)artifacts\engine\$(EnginePlatform)\$(Configuration)\</EngineDir>
+  </PropertyGroup>
+</Project>

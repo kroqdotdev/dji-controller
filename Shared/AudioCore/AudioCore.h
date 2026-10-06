@@ -1,7 +1,11 @@
 #ifndef AUDIO_CORE_H
 #define AUDIO_CORE_H
 
+#if defined(__APPLE__)
 #include <CoreAudio/CoreAudio.h>
+#else
+#include "AudioCorePlatform.h" // CoreAudio's buffer types, for platforms without CoreAudio
+#endif
 #include <stdbool.h>
 #include <stdint.h>
 

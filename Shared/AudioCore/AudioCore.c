@@ -176,6 +176,7 @@ static inline void writeStereo(float *buffer, UInt32 stride, UInt32 f, float lef
 OSStatus AudioCoreIOProc(AudioObjectID device, const AudioTimeStamp *now,
                          const AudioBufferList *input, const AudioTimeStamp *inputTime,
                          AudioBufferList *output, const AudioTimeStamp *outputTime, void *clientData) {
+    (void)device, (void)now, (void)inputTime, (void)outputTime;
     AudioCore *c = clientData;
     atomic_fetch_add_explicit(&c->callbacks, 1, memory_order_relaxed);
 

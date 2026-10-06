@@ -1,0 +1,30 @@
+LIBRARY LavboardEngine
+EXPORTS
+    ; Shared real-time core (Shared/AudioCore)
+    AudioCoreCreate
+    AudioCoreDestroy
+    AudioCoreSetLayout
+    AudioCoreSetAsyncSources
+    AudioCoreTrackCount
+    AudioCoreRingChannels
+    AudioCoreSetTrackGain
+    AudioCoreSetTrackMute
+    AudioCoreSetTrackVenueSend
+    AudioCoreSetTrackBalance
+    AudioCoreSetStreamLevel
+    AudioCoreSetVenueLevel
+    AudioCoreReadMeters
+    AudioCoreStartRecording
+    AudioCoreStopRecording
+    AudioCoreReadRecorded
+    AudioCoreIOProc
+    AudioCoreAsyncCreate
+    AudioCoreAsyncDestroy
+    AudioCoreAsyncLookahead
+    AudioCoreAsyncIOProc
+    AudioCoreAsyncRender
+    AudioCoreAsyncOutput
+    AudioCoreAsyncReadStats
+    ; Windows device layer
+    LbEngineVersion
+    LbListDevices

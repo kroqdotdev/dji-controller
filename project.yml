@@ -28,6 +28,8 @@ targets:
     platform: macOS
     sources:
       - path: App
+      # The real-time mixer and resampler, shared with the Windows app.
+      - path: Shared/AudioCore
     info:
       path: App/Info.plist
       properties:

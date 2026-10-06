@@ -1,7 +1,6 @@
 #include "AudioCore.h"
 
 #include <math.h>
-#include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,8 +22,11 @@
 #define KI 0.002              // per second squared
 #define SMOOTHING_SECONDS 0.5 // time constant of the buffered-amount filter
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 static float kernel[KERNEL_ZEROS * KERNEL_STEPS + 2];
-static pthread_once_t kernelOnce = PTHREAD_ONCE_INIT;
 
 static double besselI0(double x) {
     double sum = 1, term = 1;
@@ -47,6 +49,27 @@ static void buildKernel(void) {
     }
     kernel[KERNEL_ZEROS * KERNEL_STEPS + 1] = 0;
 }
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+static INIT_ONCE kernelOnce = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK buildKernelOnce(PINIT_ONCE once, PVOID parameter, PVOID *context) {
+    (void)once, (void)parameter, (void)context;
+    buildKernel();
+    return TRUE;
+}
+static void ensureKernel(void) { InitOnceExecuteOnce(&kernelOnce, buildKernelOnce, NULL, NULL); }
+#else
+#include <pthread.h>
+static pthread_once_t kernelOnce = PTHREAD_ONCE_INIT;
+static void ensureKernel(void) { pthread_once(&kernelOnce, buildKernel); }
+#endif
 
 static inline float kernelAt(double t) {
     double x = t * KERNEL_STEPS;
@@ -89,7 +112,7 @@ struct AudioCoreAsyncSource {
 
 AudioCoreAsyncSource *AudioCoreAsyncCreate(int channels, double sourceRate, double targetRate, uint32_t latencyFrames) {
     if (!(sourceRate > 0) || !(targetRate > 0)) return NULL;
-    pthread_once(&kernelOnce, buildKernel);
+    ensureKernel();
     AudioCoreAsyncSource *s = calloc(1, sizeof *s);
     if (!s) return NULL;
     s->channels = channels < 1 ? 1 : (channels > AC_ASYNC_MAX_CHANNELS ? AC_ASYNC_MAX_CHANNELS : channels);
@@ -121,6 +144,7 @@ int AudioCoreAsyncLookahead(AudioCoreAsyncSource *s) { return s->halfTaps; }
 OSStatus AudioCoreAsyncIOProc(AudioObjectID device, const AudioTimeStamp *now,
                               const AudioBufferList *input, const AudioTimeStamp *inputTime,
                               AudioBufferList *output, const AudioTimeStamp *outputTime, void *clientData) {
+    (void)device, (void)now, (void)inputTime, (void)outputTime;
     AudioCoreAsyncSource *s = clientData;
     // This IOProc never plays anything; keep any output streams of a combined device silent.
     if (output) {
