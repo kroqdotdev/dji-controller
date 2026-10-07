@@ -28,6 +28,9 @@ public sealed class WasapiEngine : IAudioEngine, IDisposable
     private EnginePlan plan;
     private string? startedSignature;
     private int generation;
+    private int appliedGeneration;
+    /// <summary>A rebuild hasn't landed yet, so the core's layout doesn't match <see cref="tracks"/>.</summary>
+    private bool Building => appliedGeneration != generation;
     private EngineStatus? status;
     private string? failure;
 
@@ -129,8 +132,9 @@ public sealed class WasapiEngine : IAudioEngine, IDisposable
                                 AudioApps.ProcessFor, (uint)Environment.ProcessId);
         // A process loopback follows one process: replan when a captured app quits or one starts.
         if (tracks.Any(t => t.Source is AppSource)) appTimer.Start(); else appTimer.Stop();
-        ApplyControls();
         if (plan.Signature != startedSignature) Rebuild();
+        // While a rebuild is under way the core still has the old layout; the build applies these.
+        if (!Building) ApplyControls();
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -141,6 +145,7 @@ public sealed class WasapiEngine : IAudioEngine, IDisposable
         int build = ++generation;
         var next = plan;
         uint period = (uint)bufferFrames;
+        var controls = tracks.Take(Native.MaxTracks).Select(Controls.Of).ToArray();
         _ = Task.Run(async () =>
         {
             await serial.WaitAsync();
@@ -159,16 +164,22 @@ public sealed class WasapiEngine : IAudioEngine, IDisposable
                 {
                     try
                     {
-                        started = native.Start(next, period);
+                        started = native.Start(next, period, core => { for (int i = 0; i < controls.Length; i++) controls[i].Apply(core, i); });
                     }
                     catch (EngineStartException e)
                     {
                         failed = $"{clock.Name} {e.Message}.";
                     }
+                    catch (Exception e) when (e is not OutOfMemoryException)
+                    {
+                        // Still land the build below, so the UI and the track settings stay in step.
+                        failed = $"The audio engine couldn't start: {e.Message}";
+                    }
                 }
                 ui.TryEnqueue(() =>
                 {
                     if (build != generation) return;
+                    appliedGeneration = build;
                     status = started;
                     failure = failed;
                     ApplyControls();
@@ -184,10 +195,13 @@ public sealed class WasapiEngine : IAudioEngine, IDisposable
 
     private void OnTrackChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (sender is Track track && e.PropertyName is nameof(Track.FaderDb) or nameof(Track.Muted) or nameof(Track.SendToVenue) or nameof(Track.Balance))
+        if (Building || sender is not Track track || e.PropertyName is not (nameof(Track.FaderDb) or nameof(Track.Muted) or nameof(Track.SendToVenue) or nameof(Track.Balance)))
         {
-            int index = ((List<Track>)tracks).IndexOf(track);
-            if (index >= 0) ApplyControl(index);
+            return; // a build in flight applies every track's settings when it lands
+        }
+        for (int i = 0; i < tracks.Count && i < Native.MaxTracks; i++)
+        {
+            if (ReferenceEquals(tracks[i], track)) ApplyControl(i);
         }
     }
 
@@ -197,13 +211,20 @@ public sealed class WasapiEngine : IAudioEngine, IDisposable
         for (int i = 0; i < tracks.Count && i < Native.MaxTracks; i++) ApplyControl(i);
     }
 
-    private void ApplyControl(int index)
+    private void ApplyControl(int index) => Controls.Of(tracks[index]).Apply(native.Core, index);
+
+    /// <summary>A track's settings as the core holds them, captured so a build can apply them off the UI thread.</summary>
+    private readonly record struct Controls(float Gain, bool Muted, bool Venue, float Balance)
     {
-        var track = tracks[index];
-        Native.AudioCoreSetTrackGain(native.Core, index, Decibels.Linear(track.FaderDb));
-        Native.AudioCoreSetTrackMute(native.Core, index, track.Muted);
-        Native.AudioCoreSetTrackVenueSend(native.Core, index, track.SendToVenue);
-        Native.AudioCoreSetTrackBalance(native.Core, index, (float)track.Balance);
+        public static Controls Of(Track track) => new(Decibels.Linear(track.FaderDb), track.Muted, track.SendToVenue, (float)track.Balance);
+
+        public void Apply(IntPtr core, int index)
+        {
+            Native.AudioCoreSetTrackGain(core, index, Gain);
+            Native.AudioCoreSetTrackMute(core, index, Muted);
+            Native.AudioCoreSetTrackVenueSend(core, index, Venue);
+            Native.AudioCoreSetTrackBalance(core, index, Balance);
+        }
     }
 
     public void Dispose()

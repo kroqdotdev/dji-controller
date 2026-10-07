@@ -35,11 +35,17 @@ public sealed unsafe class NativeEngine : IDisposable
 
     public bool IsRunning => Native.LbEngineIsRunning(engine) != 0;
 
-    /// <summary>Opens and starts <paramref name="plan"/>, replacing whatever ran.</summary>
-    public EngineStatus Start(EnginePlan plan, uint periodFrames)
+    /// <summary>
+    /// Opens and starts <paramref name="plan"/>, replacing whatever ran. <paramref name="applyControls"/>
+    /// runs after the old layout stops and before the new one starts, so per-track settings (which
+    /// the core keys by track index) never reach the wrong track while tracks move.
+    /// </summary>
+    public EngineStatus Start(EnginePlan plan, uint periodFrames, Action<IntPtr>? applyControls = null)
     {
         lock (gate)
         {
+            Native.LbEngineStop(engine);
+            applyControls?.Invoke(Core);
             var strings = new List<IntPtr>();
             IntPtr Text(string? text)
             {
