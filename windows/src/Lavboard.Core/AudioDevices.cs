@@ -11,6 +11,15 @@ public sealed record AudioDevice(string Id, string Name, bool IsInput, int Chann
 
 public static class AudioDevices
 {
+    /// <summary>A capture endpoint's own gain and range in dB, or null when its driver offers none.</summary>
+    public static unsafe (double Db, double Min, double Max)? InputGain(string id)
+    {
+        float db, min, max;
+        return Native.LbGetInputGain(id, &db, &min, &max) == 0 ? (db, min, max) : null;
+    }
+
+    public static void SetInputGain(string id, double db) => Native.LbSetInputGain(id, (float)db);
+
     /// <summary>Every active input and output endpoint.</summary>
     public static unsafe IReadOnlyList<AudioDevice> List()
     {

@@ -29,6 +29,8 @@ EXPORTS
     LbEngineVersion
     LbListDevices
     LbWatchDevices
+    LbGetInputGain
+    LbSetInputGain
     LbEngineCreate
     LbEngineStart
     LbEngineStop

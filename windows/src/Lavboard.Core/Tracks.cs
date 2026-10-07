@@ -31,42 +31,42 @@ public static class TapeColors
 public abstract record TrackSource
 {
     /// <summary>Identifies the physical input, ignoring cached names.</summary>
-    public abstract string Identity { get; }
+    [JsonIgnore] public abstract string Identity { get; }
     /// <summary>Short description for the strip, e.g. "TX2" or "In 3+4".</summary>
-    public abstract string ChannelLabel { get; }
-    public virtual bool IsStereo => false;
-    public bool IsTap => this is AppSource or SystemAudioSource;
+    [JsonIgnore] public abstract string ChannelLabel { get; }
+    [JsonIgnore] public virtual bool IsStereo => false;
+    [JsonIgnore] public bool IsTap => this is AppSource or SystemAudioSource;
 }
 
 /// <summary>A transmitter slot (0-based, shown as TX1, TX2 ...) of a wireless mic system.</summary>
 public sealed record TransmitterSource(string System, int Slot) : TrackSource
 {
-    public override string Identity => $"{System}#tx{Slot}";
-    public override string ChannelLabel => $"TX{Slot + 1}";
+    [JsonIgnore] public override string Identity => $"{System}#tx{Slot}";
+    [JsonIgnore] public override string ChannelLabel => $"TX{Slot + 1}";
 }
 
 /// <summary>A channel, or a stereo pair starting at <see cref="Channel"/>, on any input device.</summary>
 public sealed record DeviceSource(string Uid, string Name, int Channel, bool Stereo) : TrackSource
 {
-    public override string Identity => $"{Uid}#{Channel}#{Stereo}";
-    public override string ChannelLabel => Stereo ? $"In {Channel + 1}+{Channel + 2}" : $"In {Channel + 1}";
-    public override bool IsStereo => Stereo;
+    [JsonIgnore] public override string Identity => $"{Uid}#{Channel}#{Stereo}";
+    [JsonIgnore] public override string ChannelLabel => Stereo ? $"In {Channel + 1}+{Channel + 2}" : $"In {Channel + 1}";
+    [JsonIgnore] public override bool IsStereo => Stereo;
 }
 
 /// <summary>What one app plays.</summary>
 public sealed record AppSource(string AppId, string Name) : TrackSource
 {
-    public override string Identity => $"app#{AppId}";
-    public override string ChannelLabel => "App audio";
-    public override bool IsStereo => true;
+    [JsonIgnore] public override string Identity => $"app#{AppId}";
+    [JsonIgnore] public override string ChannelLabel => "App audio";
+    [JsonIgnore] public override bool IsStereo => true;
 }
 
 /// <summary>Everything playing on the PC, except Lavboard and streaming apps.</summary>
 public sealed record SystemAudioSource : TrackSource
 {
-    public override string Identity => "system-audio";
-    public override string ChannelLabel => "All apps";
-    public override bool IsStereo => true;
+    [JsonIgnore] public override string Identity => "system-audio";
+    [JsonIgnore] public override string ChannelLabel => "All apps";
+    [JsonIgnore] public override bool IsStereo => true;
 }
 
 /// <summary>One mixer channel. Mute isn't saved: every launch starts with all mics live.</summary>

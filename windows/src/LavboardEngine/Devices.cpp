@@ -2,6 +2,7 @@
 #include "Wasapi.h"
 
 #include <devicetopology.h>
+#include <endpointvolume.h>
 #include <functiondiscoverykeys_devpkey.h>
 
 #include <atomic>
@@ -167,6 +168,36 @@ extern "C" int32_t LbListDevices(LbDevice *devices, int32_t capacity) {
         }
     }
     return count;
+}
+
+namespace {
+
+ComPtr<IAudioEndpointVolume> endpointVolume(const wchar_t *id) {
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    if (!id || FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator)))) return nullptr;
+    ComPtr<IMMDevice> device;
+    if (FAILED(enumerator->GetDevice(id, &device))) return nullptr;
+    ComPtr<IAudioEndpointVolume> volume;
+    if (FAILED(device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, &volume))) return nullptr;
+    return volume;
+}
+
+} // namespace
+
+extern "C" int32_t LbGetInputGain(const wchar_t *id, float *db, float *minimumDb, float *maximumDb) {
+    ComScope com;
+    auto volume = endpointVolume(id);
+    if (!volume || !db || !minimumDb || !maximumDb) return -1;
+    float increment = 0;
+    if (FAILED(volume->GetVolumeRange(minimumDb, maximumDb, &increment)) || *maximumDb <= *minimumDb) return -2;
+    return SUCCEEDED(volume->GetMasterVolumeLevel(db)) ? 0 : -3;
+}
+
+extern "C" int32_t LbSetInputGain(const wchar_t *id, float db) {
+    ComScope com;
+    auto volume = endpointVolume(id);
+    if (!volume) return -1;
+    return SUCCEEDED(volume->SetMasterVolumeLevel(db, nullptr)) ? 0 : -2;
 }
 
 extern "C" int32_t LbWatchDevices(LbDeviceCallback callback, void *context) {

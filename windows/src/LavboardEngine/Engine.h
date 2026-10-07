@@ -41,6 +41,11 @@ int32_t LbEngineVersion(void);
 /// can exceed `capacity`). Returns a negative HRESULT-derived code if enumeration fails.
 int32_t LbListDevices(LbDevice *devices, int32_t capacity);
 
+/// The endpoint's own volume, in dB, for capture devices whose driver offers one (most USB mics).
+/// Returns 0 and fills the range on success; nonzero when the endpoint has no volume control.
+int32_t LbGetInputGain(const wchar_t *id, float *db, float *minimumDb, float *maximumDb);
+int32_t LbSetInputGain(const wchar_t *id, float db);
+
 /// Calls `callback` (on a system thread) whenever endpoints appear, disappear, change state or
 /// format, or the default endpoint changes. Pass NULL to stop. One callback per process.
 typedef void (*LbDeviceCallback)(void *context);

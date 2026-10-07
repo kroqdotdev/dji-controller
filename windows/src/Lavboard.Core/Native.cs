@@ -134,6 +134,8 @@ public static unsafe partial class Native
 
     [LibraryImport(Engine)] public static partial int LbEngineVersion();
     [LibraryImport(Engine)] public static partial int LbListDevices(LbDevice* devices, int capacity);
+    [LibraryImport(Engine, StringMarshalling = StringMarshalling.Utf16)] public static partial int LbGetInputGain(string id, float* db, float* minimumDb, float* maximumDb);
+    [LibraryImport(Engine, StringMarshalling = StringMarshalling.Utf16)] public static partial int LbSetInputGain(string id, float db);
     [LibraryImport(Engine)] public static partial int LbWatchDevices(delegate* unmanaged<IntPtr, void> callback, IntPtr context);
     [LibraryImport(Engine)] public static partial IntPtr LbEngineCreate(IntPtr core);
     [LibraryImport(Engine)] public static partial int LbEngineStart(IntPtr engine, LbEngineConfig* config, LbEngineInfo* info, char* error, int errorCapacity);

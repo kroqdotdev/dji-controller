@@ -86,9 +86,20 @@ public sealed class DemoEngine(IReadOnlyList<AudioDevice> inputs, IReadOnlyList<
 
     public double? VenueLatencyMs => venueOutput != null ? VenueMs : null;
     public string? Warning => null;
+    public bool MicrophoneBlocked => false;
     public string? Failure => null;
 
     public void SetLevels(double streamDb, double venueDb) { }
+
+    public bool CanRecord => tracks.Count > 0;
+    /// <summary>Pretends to record: the session folder is named but nothing is written.</summary>
+    public IRecording StartRecording(string folder, IReadOnlyList<(string Name, int Channels)> tracks, RecordingFormat format) =>
+        new DemoRecording(Path.Combine(folder, $"Session {DateTime.Now:yyyy-MM-dd HH.mm.ss}"));
+
+    private sealed record DemoRecording(string Folder) : IRecording
+    {
+        public ulong Stop() => 0;
+    }
     public void SetBufferFrames(int frames) { }
 
     public InputGain? DeviceGain(DeviceSource source) => Gains.GetValueOrDefault(source.Uid);

@@ -17,6 +17,9 @@ public sealed class EngineStartException(string message) : Exception(message);
 /// </summary>
 public sealed unsafe class NativeEngine : IDisposable
 {
+    /// <summary>Why a capture endpoint didn't open when the Windows microphone privacy setting blocks desktop apps.</summary>
+    public const string PrivacyReason = "is blocked by the Windows privacy settings";
+
     /// <summary>About 11 s of 18-channel audio for the recorder, as on the Mac.</summary>
     private const uint RingFrames = 1 << 19;
 

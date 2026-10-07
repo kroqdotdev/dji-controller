@@ -1,5 +1,6 @@
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Lavboard.Core;
 using Lavboard.MicSystems;
 using Lavboard.Model;
 
@@ -28,6 +29,7 @@ public partial class App : Application
             int scene = Array.IndexOf(commandLine, "--scene");
             var model = scene >= 0 ? DemoScenes.Create(scene + 1 < commandLine.Length ? commandLine[scene + 1] : null) : Live();
             window = new MainWindow(model);
+            window.Closed += (_, _) => settingsStore?.Save();
             window.Activate();
             model.Start();
         }
@@ -38,12 +40,18 @@ public partial class App : Application
         }
     }
 
-    /// <summary>The real engine, with every supported mic system.</summary>
-    private static AppModel Live()
+    private SettingsStore? settingsStore;
+
+    /// <summary>The real engine, with every supported mic system and the saved settings.</summary>
+    private AppModel Live()
     {
         IMicSystem[] systems = [new DjiMicMini2S()];
-        var engine = new WasapiEngine(systems, DispatcherQueue.GetForCurrentThread());
-        return new AppModel(engine, systems, Track.DefaultSet());
+        var ui = DispatcherQueue.GetForCurrentThread();
+        var settings = Settings.Load(Settings.DefaultPath);
+        var model = new AppModel(new WasapiEngine(systems, ui), systems, settings.Tracks ?? Track.DefaultSet());
+        SettingsStore.Apply(settings, model);
+        settingsStore = new SettingsStore(model, Settings.DefaultPath, ui);
+        return model;
     }
 
     private static void LogCrash(Exception e)

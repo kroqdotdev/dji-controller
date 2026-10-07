@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using Lavboard.Core;
 using Microsoft.UI.Dispatching;
 
 namespace Lavboard.Model;
@@ -27,6 +28,7 @@ public sealed partial class AppModel : ObservableObject
     private bool backupOnTransmitters;
     private bool isRecording;
     private DateTime? recordingStartedAt;
+    private IRecording? recording;
     private string? lastRecordingFolder;
     private string? recordingError;
     private string recordingFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyMusic), "Lavboard");
@@ -67,7 +69,7 @@ public sealed partial class AppModel : ObservableObject
     public static IReadOnlyList<string> RecordingFormats { get; } = ["24-bit", "32-bit float"];
     public string RecordingFolder { get => recordingFolder; set => Set(ref recordingFolder, value); }
 
-    public bool CanRecord => Tracks.Count > 0;
+    public bool CanRecord => Tracks.Count > 0 && Engine.CanRecord;
     public bool CanAddTrack => Tracks.Count < Track.Maximum && !IsRecording;
     /// <summary>Tracks can't be added, removed or re-sourced mid-recording: the files are fixed at the start.</summary>
     public bool CanEditTracks => !IsRecording;
@@ -96,19 +98,53 @@ public sealed partial class AppModel : ObservableObject
 
     // MARK: Recording
 
-    /// <summary>Starts or stops a session. The recorder itself comes with the WASAPI engine.</summary>
+    /// <summary>Starts or stops a session: a file per track plus the stream mix, and the transmitters' own backup.</summary>
     public void ToggleRecording()
     {
         if (IsRecording)
         {
-            IsRecording = false;
-            RecordingStartedAt = null;
+            StopRecording();
             return;
         }
         if (!CanRecord) return;
-        LastRecordingFolder = Path.Combine(RecordingFolder, $"Session {DateTime.Now:yyyy-MM-dd HH.mm.ss}");
+        RecordingError = null;
+        try
+        {
+            recording = Engine.StartRecording(RecordingFolder, Tracks.Select(t => (t.Name, t.Source.IsStereo ? 2 : 1)).ToList(),
+                                              Lavboard.Core.RecordingFormats.Parse(RecordingFormat));
+        }
+        catch (InvalidOperationException e)
+        {
+            RecordingError = e.Message;
+            return;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            RecordingError = $"Couldn't start recording: {e.Message}";
+            return;
+        }
+        LastRecordingFolder = recording.Folder;
         RecordingStartedAt = DateTime.Now;
         IsRecording = true;
+        SetTransmitterRecording(true);
+    }
+
+    /// <summary>Finishes the files; also called when the window closes mid-recording.</summary>
+    public void StopRecording()
+    {
+        if (recording == null) return;
+        ulong dropped = recording.Stop();
+        recording = null;
+        IsRecording = false;
+        RecordingStartedAt = null;
+        SetTransmitterRecording(false);
+        if (dropped > 0) RecordingError = $"Recording dropped {dropped} buffers (disk too slow).";
+    }
+
+    private void SetTransmitterRecording(bool on)
+    {
+        if (!BackupOnTransmitters) return;
+        foreach (var system in MicSystems.Where(s => s.CanRecordOnTransmitters && s.IsConnected)) system.SetTransmitterRecording(on);
     }
 
     // MARK: Tracks
@@ -193,6 +229,7 @@ public sealed partial class AppModel : ObservableObject
     {
         get
         {
+            if (Engine.MicrophoneBlocked) return "Microphone access is off";
             if (Engine.Failure is { } failure) return failure;
             if (Engine.Warning is { } warning) return warning;
             string tracks = Tracks.Count == 1 ? "1 track" : $"{Tracks.Count} tracks";
@@ -208,5 +245,6 @@ public sealed partial class AppModel : ObservableObject
     {
         Raise(nameof(Title));
         Raise(nameof(Subtitle));
+        Raise(nameof(CanRecord));
     }
 }

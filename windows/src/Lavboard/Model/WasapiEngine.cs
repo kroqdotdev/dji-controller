@@ -55,9 +55,19 @@ public sealed class WasapiEngine : IAudioEngine, IDisposable
     public double? VenueLatencyMs => status?.VenueLatencyMs;
     public string? Warning => plan.Warning ?? status?.Problems.FirstOrDefault();
     public string? Failure => failure;
+    public bool MicrophoneBlocked =>
+        (failure?.Contains(NativeEngine.PrivacyReason) ?? false) || (status?.Problems.Any(p => p.Contains(NativeEngine.PrivacyReason)) ?? false);
 
-    public InputGain? DeviceGain(DeviceSource source) => null;
-    public void SetDeviceGain(DeviceSource source, double db) { }
+    public bool CanRecord => status != null && startedSignature == plan.Signature && native.IsRunning;
+
+    public IRecording StartRecording(string folder, IReadOnlyList<(string Name, int Channels)> tracks, RecordingFormat format) =>
+        RecordingSession.Start(native.Core, folder, tracks, status?.SampleRate ?? 48_000, format, DateTime.Now);
+
+    /// <summary>Whole dB steps, like the macOS stepper; the endpoint rounds to what it supports.</summary>
+    public InputGain? DeviceGain(DeviceSource source) =>
+        devices.Any(d => d.Id == source.Uid) && AudioDevices.InputGain(source.Uid) is var (db, min, max) ? new InputGain(Math.Round(db), min, max) : null;
+
+    public void SetDeviceGain(DeviceSource source, double db) => AudioDevices.SetInputGain(source.Uid, db);
 
     public void Configure(IReadOnlyList<Track> tracks, string? streamOutputId, string? venueOutputId)
     {
