@@ -1,6 +1,8 @@
 #include "Wasapi.h"
 
+#include <audioclientactivationparams.h>
 #include <ksmedia.h>
+#include <wrl/implements.h>
 
 #include <algorithm>
 #include <cwchar>
@@ -91,7 +93,11 @@ std::wstring Stream::open(const std::wstring &id, bool capture, uint32_t periodF
         periodFrames_ = static_cast<uint32_t>((defaultPeriod * rate_ + 5'000'000) / 10'000'000);
     }
 
-    hr = client_->SetEventHandle(event_);
+    return finishOpen(capture);
+}
+
+std::wstring Stream::finishOpen(bool capture) {
+    HRESULT hr = client_->SetEventHandle(event_);
     if (FAILED(hr)) return L"couldn't start (" + hresultText(hr) + L")";
     UINT32 buffer = 0;
     client_->GetBufferSize(&buffer);
@@ -110,6 +116,83 @@ std::wstring Stream::open(const std::wstring &id, bool capture, uint32_t periodF
         if (SUCCEEDED(render_->GetBuffer(bufferFrames_, &data))) render_->ReleaseBuffer(bufferFrames_, AUDCLNT_BUFFERFLAGS_SILENT);
     }
     return {};
+}
+
+namespace {
+
+/// Receives the audio client that ActivateAudioInterfaceAsync creates. Free-threaded, as the API requires.
+class ActivationHandler final
+    : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, Microsoft::WRL::FtmBase,
+                                          IActivateAudioInterfaceCompletionHandler> {
+public:
+    ActivationHandler() : done(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
+    ~ActivationHandler() override {
+        if (done) CloseHandle(done);
+    }
+
+    STDMETHOD(ActivateCompleted)(IActivateAudioInterfaceAsyncOperation *operation) override {
+        ComPtr<IUnknown> unknown;
+        HRESULT activated = E_FAIL;
+        HRESULT hr = operation->GetActivateResult(&activated, &unknown);
+        result = FAILED(hr) ? hr : activated;
+        if (SUCCEEDED(result)) unknown.As(&client);
+        SetEvent(done);
+        return S_OK;
+    }
+
+    HANDLE done;
+    HRESULT result = E_PENDING;
+    ComPtr<IAudioClient> client;
+};
+
+} // namespace
+
+std::wstring Stream::openLoopback(uint32_t processId, bool exclude, uint32_t rate) {
+    id_ = L"loopback";
+    AUDIOCLIENT_ACTIVATION_PARAMS params = {};
+    params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
+    params.ProcessLoopbackParams.TargetProcessId = processId;
+    params.ProcessLoopbackParams.ProcessLoopbackMode =
+        exclude ? PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE : PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
+    PROPVARIANT activation = {};
+    activation.vt = VT_BLOB;
+    activation.blob.cbSize = sizeof(params);
+    activation.blob.pBlobData = reinterpret_cast<BYTE *>(&params);
+
+    auto handler = Microsoft::WRL::Make<ActivationHandler>();
+    ComPtr<IActivateAudioInterfaceAsyncOperation> operation;
+    HRESULT hr = ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, __uuidof(IAudioClient), &activation, handler.Get(), &operation);
+    if (FAILED(hr)) return L"needs a newer version of Windows (" + hresultText(hr) + L")";
+    if (WaitForSingleObject(handler->done, 3000) != WAIT_OBJECT_0) return L"didn't respond";
+    if (FAILED(handler->result) || !handler->client) return L"couldn't be captured (" + hresultText(handler->result) + L")";
+    client_ = handler->client;
+
+    // Process loopback has no mix format of its own; it converts to whatever the client asks for.
+    WAVEFORMATEXTENSIBLE format = {};
+    format.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+    format.Format.nChannels = 2;
+    format.Format.nSamplesPerSec = rate;
+    format.Format.wBitsPerSample = 32;
+    format.Format.nBlockAlign = 2 * 4;
+    format.Format.nAvgBytesPerSec = rate * format.Format.nBlockAlign;
+    format.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+    format.Samples.wValidBitsPerSample = 32;
+    format.dwChannelMask = SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT;
+    format.SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+    channels_ = 2;
+    rate_ = rate;
+
+    event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!event_) return L"couldn't be captured (no event)";
+    constexpr REFERENCE_TIME buffer = 200'000; // 20 ms
+    hr = client_->Initialize(AUDCLNT_SHAREMODE_SHARED,
+                             AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM |
+                                 AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+                             buffer, 0, &format.Format, nullptr);
+    if (FAILED(hr)) return L"couldn't be captured (" + hresultText(hr) + L")";
+    // Loopback delivers about every 10 ms, whatever the outputs run at.
+    periodFrames_ = rate / 100;
+    return finishOpen(true);
 }
 
 HRESULT Stream::start() {

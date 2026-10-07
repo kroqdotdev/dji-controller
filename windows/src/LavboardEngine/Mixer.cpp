@@ -300,6 +300,8 @@ int32_t LbEngine::start(const LbEngineConfig &config, LbEngineInfo &info, std::w
     for (double &latency : info.trackLatencyMs) latency = -1;
 
     const int inputCount = std::clamp(config.inputCount, 0, LB_MAX_INPUTS);
+    const int loopbackCount = std::clamp(config.loopbackCount, 0, LB_MAX_INPUTS - inputCount);
+    const int sourceCount = inputCount + loopbackCount;
     clockIsInput = config.clockFromInput && inputCount > 0;
     const wchar_t *clockId = clockIsInput ? config.inputIds[0] : config.clockOutputId;
     if (!clockId) {
@@ -320,12 +322,19 @@ int32_t LbEngine::start(const LbEngineConfig &config, LbEngineInfo &info, std::w
 
     // Inputs: the clock's own reaches the mixer directly; the others are resampled.
     const double clockedInputMs = clockIsInput ? (clock->latencyFrames() + period) / rate * 1000.0 : 0.0;
-    inputs.resize(inputCount);
-    std::vector<AudioCoreAsyncSource *> sources(inputCount, nullptr);
-    for (int i = 0; i < inputCount; i++) {
+    inputs.resize(sourceCount);
+    std::vector<AudioCoreAsyncSource *> sources(sourceCount, nullptr);
+    for (int i = 0; i < sourceCount; i++) {
         if (clockIsInput && i == 0) continue;
         auto device = std::make_unique<Stream>();
-        if (std::wstring why = device->open(config.inputIds[i], true, 0); !why.empty()) {
+        std::wstring why;
+        if (i < inputCount) {
+            why = device->open(config.inputIds[i], true, 0);
+        } else {
+            const LbLoopbackSpec &loopback = config.loopbacks[i - inputCount];
+            why = device->openLoopback(loopback.processId, loopback.exclude != 0, static_cast<uint32_t>(rate));
+        }
+        if (!why.empty()) {
             copyText(info.inputErrors[i], LB_PROBLEM_LENGTH, why);
             continue;
         }
@@ -379,7 +388,7 @@ int32_t LbEngine::start(const LbEngineConfig &config, LbEngineInfo &info, std::w
         const LbTrackSpec &spec = config.tracks[t];
         AudioCoreTrackLayout &layout = layouts[t];
         layout = {-1, -1, -1, -1, spec.stereo != 0, -1};
-        if (spec.input < 0 || spec.input >= inputCount) continue;
+        if (spec.input < 0 || spec.input >= sourceCount) continue;
         if (clockIsInput && spec.input == 0) {
             layout.buffer = 0;
             layout.channel = spec.channel;
@@ -391,12 +400,12 @@ int32_t LbEngine::start(const LbEngineConfig &config, LbEngineInfo &info, std::w
             info.trackLatencyMs[t] = std::max(0.0, inputs[spec.input].latencyMs - clockedInputMs);
         }
     }
-    AudioCoreSetAsyncSources(core, sources.data(), inputCount);
+    AudioCoreSetAsyncSources(core, sources.data(), sourceCount);
     AudioCoreSetLayout(core, layouts.data(), trackCount, venue.active ? kVenueBuffer : -1, stream.active ? kStreamBuffer : -1);
 
     // Resampled devices start first, so audio is buffered by the time the mixer runs.
     running = true;
-    for (int i = 0; i < inputCount; i++) {
+    for (int i = 0; i < sourceCount; i++) {
         Input &input = inputs[i];
         if (!input.stream) continue;
         if (FAILED(input.stream->start())) {

@@ -42,6 +42,9 @@ public:
     /// endpoint offers (IAudioClient3), otherwise the nearest it supports; endpoints without
     /// low-latency support use their default period. Returns a message on failure.
     std::wstring open(const std::wstring &id, bool capture, uint32_t periodFrames);
+    /// Opens process loopback capture of `processId`'s tree (or everything but it, with
+    /// `exclude`) as 32-bit float stereo at `rate`. Needs Windows 10 build 20348 or later.
+    std::wstring openLoopback(uint32_t processId, bool exclude, uint32_t rate);
     HRESULT start();
     void stop();
 
@@ -62,6 +65,9 @@ public:
     IAudioClient *client() const { return client_.Get(); }
 
 private:
+    /// Event, buffer, latency and service setup shared by both kinds of stream.
+    std::wstring finishOpen(bool capture);
+
     std::wstring id_;
     Microsoft::WRL::ComPtr<IAudioClient> client_;
     Microsoft::WRL::ComPtr<IAudioCaptureClient> capture_;

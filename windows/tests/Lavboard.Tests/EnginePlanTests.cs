@@ -81,7 +81,7 @@ public class EnginePlanTests
     public void NothingToCaptureLeavesTheEngineIdle()
     {
         Assert.True(Plan([Tx(0)], [UsbMic, Speakers]).IsIdle);
-        Assert.True(Plan([new SystemAudioSource()]).IsIdle);
+        Assert.True(Plan([new AppSource("spotify.exe", "Spotify")]).IsIdle); // no process lookup: not running
     }
 
     [Fact]
@@ -100,6 +100,39 @@ public class EnginePlanTests
         Assert.False(plan.Tracks[0].IsAvailable);
         Assert.False(plan.Tracks[1].IsAvailable);
         Assert.True(plan.IsIdle);
+    }
+
+    private static uint? Running(string appId) => appId switch { "spotify.exe" => 4242, "msedge.exe" => 77, _ => null };
+
+    [Fact]
+    public void AppAudioIsCapturedAfterTheInputsOncePerApp()
+    {
+        TrackSource spotify = new AppSource("spotify.exe", "Spotify");
+        var plan = EnginePlan.Build([Tx(0), spotify, new SystemAudioSource(), spotify], All, Systems, null, null, Running, ownProcessId: 999);
+        Assert.Equal(["rx"], plan.Inputs.Select(d => d.Id));
+        Assert.Equal([new PlannedLoopback(spotify.Identity, "Spotify", 4242, false), new PlannedLoopback("system-audio", "PC audio", 999, true)],
+                     plan.Loopbacks);
+        Assert.Equal(new PlannedTrack(1, 0, true), plan.Tracks[1]);
+        Assert.Equal(new PlannedTrack(2, 0, true), plan.Tracks[2]);
+        Assert.Equal(plan.Tracks[1], plan.Tracks[3]);
+    }
+
+    [Fact]
+    public void AppsThatArentRunningAreSilent()
+    {
+        var plan = EnginePlan.Build([new AppSource("teams.exe", "Teams")], All, Systems, null, null, Running);
+        Assert.False(plan.Tracks[0].IsAvailable);
+        Assert.True(plan.IsIdle);
+    }
+
+    [Fact]
+    public void AppAudioAloneRunsOnAnOutputClock()
+    {
+        var plan = EnginePlan.Build([new AppSource("msedge.exe", "Microsoft Edge")], All, Systems, null, null, Running);
+        Assert.False(plan.IsIdle);
+        Assert.False(plan.ClockFromInput);
+        Assert.Equal(Speakers, plan.ClockOutput);
+        Assert.Equal(new PlannedTrack(0, 0, true), plan.Tracks[0]);
     }
 
     [Fact]

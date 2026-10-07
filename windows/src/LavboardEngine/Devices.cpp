@@ -2,6 +2,7 @@
 #include "Wasapi.h"
 
 #include <devicetopology.h>
+#include <audiopolicy.h>
 #include <endpointvolume.h>
 #include <functiondiscoverykeys_devpkey.h>
 
@@ -198,6 +199,42 @@ extern "C" int32_t LbSetInputGain(const wchar_t *id, float db) {
     auto volume = endpointVolume(id);
     if (!volume) return -1;
     return SUCCEEDED(volume->SetMasterVolumeLevel(db, nullptr)) ? 0 : -2;
+}
+
+extern "C" int32_t LbListAudioSessions(LbAudioSession *sessions, int32_t capacity) {
+    ComScope com;
+    if (!com.ok()) return -1;
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator)))) return -2;
+    ComPtr<IMMDeviceCollection> outputs;
+    if (FAILED(enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &outputs))) return -3;
+    UINT outputCount = 0;
+    outputs->GetCount(&outputCount);
+    int32_t count = 0;
+    for (UINT o = 0; o < outputCount; o++) {
+        ComPtr<IMMDevice> device;
+        ComPtr<IAudioSessionManager2> manager;
+        ComPtr<IAudioSessionEnumerator> list;
+        if (FAILED(outputs->Item(o, &device)) || FAILED(device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr, &manager)) ||
+            FAILED(manager->GetSessionEnumerator(&list))) {
+            continue;
+        }
+        int sessionCount = 0;
+        list->GetCount(&sessionCount);
+        for (int s = 0; s < sessionCount; s++) {
+            ComPtr<IAudioSessionControl> control;
+            ComPtr<IAudioSessionControl2> control2;
+            if (FAILED(list->GetSession(s, &control)) || FAILED(control.As(&control2))) continue;
+            if (control2->IsSystemSoundsSession() == S_OK) continue;
+            DWORD pid = 0;
+            if (FAILED(control2->GetProcessId(&pid)) || pid == 0) continue;
+            AudioSessionState state = AudioSessionStateInactive;
+            control2->GetState(&state);
+            if (sessions && count < capacity) sessions[count] = {pid, state == AudioSessionStateActive ? 1 : 0};
+            count++;
+        }
+    }
+    return count;
 }
 
 extern "C" int32_t LbWatchDevices(LbDeviceCallback callback, void *context) {

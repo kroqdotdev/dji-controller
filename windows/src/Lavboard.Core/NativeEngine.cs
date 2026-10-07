@@ -54,6 +54,7 @@ public sealed unsafe class NativeEngine : IDisposable
                 {
                     InputCount = Math.Min(plan.Inputs.Count, Native.MaxInputs),
                     ClockFromInput = plan.ClockFromInput ? 1 : 0,
+                    LoopbackCount = Math.Min(plan.Loopbacks.Count, Native.MaxInputs - Math.Min(plan.Inputs.Count, Native.MaxInputs)),
                     ClockOutputId = Text(plan.ClockOutput?.Id),
                     VenueId = Text(plan.Venue?.Id),
                     StreamId = Text(plan.Stream?.Id),
@@ -61,6 +62,10 @@ public sealed unsafe class NativeEngine : IDisposable
                     PeriodFrames = periodFrames,
                 };
                 for (int i = 0; i < config.InputCount; i++) config.InputIds[i] = Text(plan.Inputs[i].Id);
+                for (int l = 0; l < config.LoopbackCount; l++)
+                {
+                    config.Loopbacks[l] = new LbLoopbackSpec { ProcessId = plan.Loopbacks[l].ProcessId, Exclude = plan.Loopbacks[l].Exclude ? 1 : 0 };
+                }
                 for (int t = 0; t < config.TrackCount; t++)
                 {
                     var track = plan.Tracks[t];
@@ -77,6 +82,11 @@ public sealed unsafe class NativeEngine : IDisposable
                 {
                     string why = Read(info.InputErrors + i * Native.ProblemLength);
                     if (why.Length > 0) problems.Add($"{plan.Inputs[i].Name} {why}, so its tracks are silent.");
+                }
+                for (int l = 0; l < config.LoopbackCount; l++)
+                {
+                    string why = Read(info.InputErrors + (config.InputCount + l) * Native.ProblemLength);
+                    if (why.Length > 0) problems.Add($"Couldn't capture {plan.Loopbacks[l].Name} ({why}), so its track is silent.");
                 }
                 if (plan.Venue != null && Read(info.VenueError) is { Length: > 0 } venueWhy) problems.Add($"{plan.Venue.Name} {venueWhy}, so the venue mix is silent.");
                 if (plan.Stream != null && Read(info.StreamError) is { Length: > 0 } streamWhy) problems.Add($"{plan.Stream.Name} {streamWhy}, so the stream mix is silent.");

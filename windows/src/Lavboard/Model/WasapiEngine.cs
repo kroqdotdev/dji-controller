@@ -18,6 +18,7 @@ public sealed class WasapiEngine : IAudioEngine, IDisposable
     private readonly IReadOnlyList<IMicSystem> systems;
     private readonly DispatcherQueue ui;
     private readonly DispatcherQueueTimer deviceTimer;
+    private readonly DispatcherQueueTimer appTimer;
     private readonly SemaphoreSlim serial = new(1, 1);
 
     private IReadOnlyList<AudioDevice> devices = [];
@@ -40,6 +41,14 @@ public sealed class WasapiEngine : IAudioEngine, IDisposable
         deviceTimer.Interval = TimeSpan.FromMilliseconds(300);
         deviceTimer.IsRepeating = false;
         deviceTimer.Tick += (_, _) => RefreshDevices();
+        appTimer = ui.CreateTimer();
+        appTimer.Interval = TimeSpan.FromSeconds(2);
+        appTimer.Tick += (_, _) =>
+        {
+            var next = EnginePlan.Build(tracks.Select(t => t.Source).ToList(), devices, systems, venueId, streamId,
+                                        AudioApps.ProcessFor, (uint)Environment.ProcessId);
+            if (next.Signature != plan.Signature) Replan();
+        };
         NativeEngine.DevicesChanged += () => ui.TryEnqueue(() => { deviceTimer.Stop(); deviceTimer.Start(); });
         NativeEngine.WatchDevices();
         devices = AudioDevices.List();
@@ -48,7 +57,7 @@ public sealed class WasapiEngine : IAudioEngine, IDisposable
 
     public IReadOnlyList<AudioDevice> Inputs => plan.UserInputs;
     public IReadOnlyList<AudioDevice> Outputs => plan.UserOutputs;
-    public IReadOnlyList<AudioApp> Apps => [];
+    public IReadOnlyList<AudioApp> Apps => AudioApps.List();
     public bool IsReceiverPresent(string systemId) => plan.Receivers.ContainsKey(systemId);
     public bool IsTrackAvailable(int index) => index < plan.Tracks.Count && plan.Tracks[index].IsAvailable;
     public double? TrackLatencyMs(int index) => status is { } s && index < s.TrackLatencyMs.Count ? s.TrackLatencyMs[index] : null;
@@ -116,7 +125,10 @@ public sealed class WasapiEngine : IAudioEngine, IDisposable
 
     private void Replan()
     {
-        plan = EnginePlan.Build(tracks.Select(t => t.Source).ToList(), devices, systems, venueId, streamId);
+        plan = EnginePlan.Build(tracks.Select(t => t.Source).ToList(), devices, systems, venueId, streamId,
+                                AudioApps.ProcessFor, (uint)Environment.ProcessId);
+        // A process loopback follows one process: replan when a captured app quits or one starts.
+        if (tracks.Any(t => t.Source is AppSource)) appTimer.Start(); else appTimer.Stop();
         ApplyControls();
         if (plan.Signature != startedSignature) Rebuild();
         Changed?.Invoke(this, EventArgs.Empty);
@@ -137,9 +149,11 @@ public sealed class WasapiEngine : IAudioEngine, IDisposable
                 if (build != Volatile.Read(ref generation)) return;
                 EngineStatus? started = null;
                 string? failed = null;
-                if (next.IsIdle)
+                var clock = next.ClockFromInput ? next.Inputs[0] : next.ClockOutput;
+                if (next.IsIdle || clock == null)
                 {
                     native.Stop();
+                    if (!next.IsIdle) failed = "No output device to run the mixer on.";
                 }
                 else
                 {
@@ -149,8 +163,7 @@ public sealed class WasapiEngine : IAudioEngine, IDisposable
                     }
                     catch (EngineStartException e)
                     {
-                        var clock = next.ClockFromInput ? next.Inputs[0] : next.ClockOutput;
-                        failed = $"{clock?.Name ?? "The audio device"} {e.Message}.";
+                        failed = $"{clock.Name} {e.Message}.";
                     }
                 }
                 ui.TryEnqueue(() =>

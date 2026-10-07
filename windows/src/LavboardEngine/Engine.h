@@ -46,6 +46,16 @@ int32_t LbListDevices(LbDevice *devices, int32_t capacity);
 int32_t LbGetInputGain(const wchar_t *id, float *db, float *minimumDb, float *maximumDb);
 int32_t LbSetInputGain(const wchar_t *id, float db);
 
+/// An app's audio session on an output: the process that opened it, and whether it is playing.
+typedef struct {
+    uint32_t processId;
+    int32_t active;
+} LbAudioSession;
+
+/// Fills up to `capacity` audio sessions across every active output (system sounds left out) and
+/// returns how many exist. One process can have several.
+int32_t LbListAudioSessions(LbAudioSession *sessions, int32_t capacity);
+
 /// Calls `callback` (on a system thread) whenever endpoints appear, disappear, change state or
 /// format, or the default endpoint changes. Pass NULL to stop. One callback per process.
 typedef void (*LbDeviceCallback)(void *context);
@@ -55,13 +65,21 @@ int32_t LbWatchDevices(LbDeviceCallback callback, void *context);
 
 typedef struct LbEngine LbEngine;
 
-/// Where a track reads from: channel `channel` (and `channel + 1` when stereo) of `inputs[input]`.
-/// An input of -1 means the source is missing and the track stays silent.
+/// Where a track reads from: channel `channel` (and `channel + 1` when stereo) of source `input`,
+/// counting the config's inputs first and then its loopbacks. An input of -1 means the source is
+/// missing and the track stays silent.
 typedef struct {
     int32_t input;
     int32_t channel;
     int32_t stereo;
 } LbTrackSpec;
+
+/// What an app plays (`processId` and its child processes), or with `exclude` everything except
+/// that process tree: process loopback capture, stereo at the mixer's rate.
+typedef struct {
+    uint32_t processId;
+    int32_t exclude;
+} LbLoopbackSpec;
 
 typedef struct {
     /// Capture endpoints the tracks read from. With `clockFromInput`, inputs[0] clocks the mixer
@@ -69,6 +87,10 @@ typedef struct {
     int32_t inputCount;
     const wchar_t *inputIds[LB_MAX_INPUTS];
     int32_t clockFromInput;
+    /// App and system audio, resampled like inputs on their own clock. Inputs and loopbacks
+    /// together are at most LB_MAX_INPUTS.
+    int32_t loopbackCount;
+    LbLoopbackSpec loopbacks[LB_MAX_INPUTS];
     /// Render endpoint that clocks the mixer when no input does: the stream or venue output, or
     /// any other output, which then plays silence.
     const wchar_t *clockOutputId;
@@ -89,9 +111,9 @@ typedef struct {
     /// Per track: how far a resampled track runs behind the clock's own inputs, in ms; negative
     /// for tracks on the clock input and for silent tracks.
     double trackLatencyMs[AC_MAX_TRACKS];
-    /// Per input: 1 if it started.
+    /// Per source (inputs, then loopbacks): 1 if it started.
     int32_t inputRunning[LB_MAX_INPUTS];
-    /// Per input and for each output: empty if it started, otherwise why not, worded to follow
+    /// Per source and for each output: empty if it started, otherwise why not, worded to follow
     /// the device's name ("isn't connected", "is blocked by the Windows privacy settings").
     wchar_t inputErrors[LB_MAX_INPUTS][LB_PROBLEM_LENGTH];
     wchar_t venueError[LB_PROBLEM_LENGTH];

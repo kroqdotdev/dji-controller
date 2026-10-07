@@ -29,6 +29,7 @@ EXPORTS
     LbEngineVersion
     LbListDevices
     LbWatchDevices
+    LbListAudioSessions
     LbGetInputGain
     LbSetInputGain
     LbEngineCreate

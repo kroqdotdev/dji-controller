@@ -8,8 +8,6 @@ public sealed record SourceChoice(TrackSource Source, string Title, string Defau
 /// <summary>A heading in the source picker: a mic system, an input device, or app audio.</summary>
 public sealed record SourceGroup(string Title, IReadOnlyList<SourceChoice> Options, string? Note = null);
 
-/// <summary>An app that has opened audio, for app audio tracks.</summary>
-public sealed record AudioApp(string AppId, string Name, bool Playing);
 
 public sealed partial class AppModel
 {

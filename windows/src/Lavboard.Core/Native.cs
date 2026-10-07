@@ -91,12 +91,32 @@ public struct InputPointers { private IntPtr first; }
 [System.Runtime.CompilerServices.InlineArray(Native.MaxTracks)]
 public struct TrackSpecs { private LbTrackSpec first; }
 
+/// <summary>LbLoopbackSpec: what process <see cref="ProcessId"/>'s tree plays, or everything else with <see cref="Exclude"/>.</summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct LbLoopbackSpec
+{
+    public uint ProcessId;
+    public int Exclude;
+}
+
+[System.Runtime.CompilerServices.InlineArray(Native.MaxInputs)]
+public struct LoopbackSpecs { private LbLoopbackSpec first; }
+
+[StructLayout(LayoutKind.Sequential)]
+public struct LbAudioSession
+{
+    public uint ProcessId;
+    public int Active;
+}
+
 [StructLayout(LayoutKind.Sequential)]
 public struct LbEngineConfig
 {
     public int InputCount;
     public InputPointers InputIds;
     public int ClockFromInput;
+    public int LoopbackCount;
+    public LoopbackSpecs Loopbacks;
     public IntPtr ClockOutputId;
     public IntPtr VenueId;
     public IntPtr StreamId;
@@ -134,6 +154,7 @@ public static unsafe partial class Native
 
     [LibraryImport(Engine)] public static partial int LbEngineVersion();
     [LibraryImport(Engine)] public static partial int LbListDevices(LbDevice* devices, int capacity);
+    [LibraryImport(Engine)] public static partial int LbListAudioSessions(LbAudioSession* sessions, int capacity);
     [LibraryImport(Engine, StringMarshalling = StringMarshalling.Utf16)] public static partial int LbGetInputGain(string id, float* db, float* minimumDb, float* maximumDb);
     [LibraryImport(Engine, StringMarshalling = StringMarshalling.Utf16)] public static partial int LbSetInputGain(string id, float db);
     [LibraryImport(Engine)] public static partial int LbWatchDevices(delegate* unmanaged<IntPtr, void> callback, IntPtr context);
