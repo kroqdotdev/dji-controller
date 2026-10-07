@@ -60,11 +60,29 @@ jobs:
           msbuild windows/Lavboard.slnx -restore -p:Configuration=Release -p:Platform=x64 -nologo -v:minimal
           windows/artifacts/bin/Lavboard.Tests/Release/net10.0-windows10.0.26100.0/Lavboard.Tests.exe
 
+      # Velopack makes a delta update from the previous release's full package, so start from the
+      # newest windows-v release's feed and package (none for the first release).
+      - name: Seed from the previous release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory releases | Out-Null
+          $previous = gh release list --repo $env:GITHUB_REPOSITORY --exclude-drafts --exclude-pre-releases --limit 100 --json tagName --jq '.[].tagName' |
+              Where-Object { $_ -like 'windows-v*' -and $_ -ne $env:GITHUB_REF_NAME } | Select-Object -First 1
+          if ($previous) {
+              gh release download $previous --repo $env:GITHUB_REPOSITORY --dir releases --pattern 'releases.win.json' --pattern '*-full.nupkg'
+              Write-Output "Seeded from $previous"
+          }
+          (Get-ChildItem releases -File).Name | Set-Content seeded.txt
+
       - name: Pack
         shell: pwsh
         run: |
           dotnet tool install -g vpk --version 1.2.161
           windows/scripts/Pack-Release.ps1 -Version $env:VERSION -OutputDir "$env:GITHUB_WORKSPACE/releases"
+          # The previous release keeps its own packages; only the new feed replaces the seeded one.
+          Get-Content seeded.txt | Where-Object { $_ -and $_ -ne 'releases.win.json' } | ForEach-Object { Remove-Item "releases/$_" }
 
       - uses: actions/upload-artifact@v4
         with:

@@ -31,12 +31,12 @@ public partial class App : Application
             window.Closed += (_, _) => settingsStore?.Save();
             window.Activate();
             model.Start();
-            // Installing an update exits the process: save first, and let the audio go cleanly.
+            // Installing an update exits the process: save and finish any recording first. The engine
+            // stays up: if applying fails the app carries on, and exiting releases the devices anyway.
             model.Updates.Restarting += (_, _) =>
             {
                 model.StopRecording();
                 settingsStore?.Save();
-                (model.Engine as IDisposable)?.Dispose();
             };
             if (scene < 0) _ = model.Updates.StartAsync();
         }
