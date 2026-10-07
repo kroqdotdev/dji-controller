@@ -361,7 +361,8 @@ private struct Desk: View {
         let masters: CGFloat = 2 * masterWidth
         let margins: CGFloat = 16 * 2 + 14
         let addSlot: CGFloat = canAdd ? addSlotWidth + gap : 0
-        let gaps: CGFloat = gap * CGFloat(tracks + 1)
+        // Between neighbours: strips, add slot, spacer and both outputs.
+        let gaps: CGFloat = gap * CGFloat(tracks + 2)
         let perStrip: CGFloat = (available - masters - margins - addSlot - gaps) / CGFloat(max(tracks, 1))
         return min(max(perStrip, stripRange.lowerBound), stripRange.upperBound)
     }
@@ -370,7 +371,7 @@ private struct Desk: View {
     static func minimumWidth(tracks: Int) -> CGFloat {
         let slots = CGFloat(max(tracks, 1))
         let addSlot: CGFloat = tracks < Track.maximum ? addSlotWidth + gap : 0
-        let strips: CGFloat = slots * stripRange.lowerBound + gap * (slots + 1)
+        let strips: CGFloat = slots * stripRange.lowerBound + gap * (slots + 2)
         return strips + addSlot + 2 * masterWidth + 16 * 2 + 14
     }
 

@@ -7,22 +7,29 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+                <!-- Controls.xaml merges Console.xaml, the design tokens. -->
+                <ResourceDictionary Source="ms-appx:///Themes/Controls.xaml" />
             </ResourceDictionary.MergedDictionaries>
-            <!-- The console palette, the same as the macOS app's Theme.swift. -->
-            <Color x:Key="ConsoleBackgroundColor">#1F2428</Color>
-            <Color x:Key="ConsolePanelColor">#2B3136</Color>
-            <Color x:Key="ConsoleWellColor">#171B1E</Color>
-            <Color x:Key="ConsoleEngravingColor">#9AA4AB</Color>
-            <Color x:Key="ConsoleSilkColor">#E6E9EB</Color>
-            <Color x:Key="ConsoleTapeColor">#ECEAE2</Color>
-            <Color x:Key="ConsoleInkColor">#1D2024</Color>
-            <SolidColorBrush x:Key="ConsoleBackground" Color="{StaticResource ConsoleBackgroundColor}" />
-            <SolidColorBrush x:Key="ConsolePanel" Color="{StaticResource ConsolePanelColor}" />
-            <SolidColorBrush x:Key="ConsoleWell" Color="{StaticResource ConsoleWellColor}" />
-            <SolidColorBrush x:Key="ConsoleEngraving" Color="{StaticResource ConsoleEngravingColor}" />
-            <SolidColorBrush x:Key="ConsoleSilk" Color="{StaticResource ConsoleSilkColor}" />
-            <SolidColorBrush x:Key="ConsoleTape" Color="{StaticResource ConsoleTapeColor}" />
-            <SolidColorBrush x:Key="ConsoleInk" Color="{StaticResource ConsoleInkColor}" />
+
+
+
+            <!-- System controls (menus, text fields, check boxes) use Inter at the macOS size, 13. -->
+            <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/Inter-Regular.ttf#Inter</FontFamily>
+            <x:Double x:Key="ControlContentThemeFontSize">13</x:Double>
+
+            <!-- The macOS accent: blue fills with white text, for Done and check boxes. -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Dark">
+                    <Color x:Key="SystemAccentColorLight1">#0A84FF</Color>
+                    <Color x:Key="SystemAccentColorLight2">#0A84FF</Color>
+                    <Color x:Key="SystemAccentColorLight3">#3D9BFF</Color>
+                    <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#0A84FF" />
+                    <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#2A93FF" />
+                    <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#0A6FD6" />
+                    <SolidColorBrush x:Key="TextOnAccentFillColorPrimaryBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="TextOnAccentFillColorSecondaryBrush" Color="#E6FFFFFF" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
         </ResourceDictionary>
     </Application.Resources>
 </Application>
