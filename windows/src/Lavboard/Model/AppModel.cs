@@ -29,6 +29,7 @@ public sealed partial class AppModel : ObservableObject
     private DateTime? recordingStartedAt;
     private string? lastRecordingFolder;
     private string? recordingError;
+    private string recordingFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyMusic), "Lavboard");
     private DispatcherQueueTimer? meterTimer;
 
     public AppModel(IAudioEngine engine, IReadOnlyList<IMicSystem> micSystems, IEnumerable<Track> tracks)
@@ -64,7 +65,7 @@ public sealed partial class AppModel : ObservableObject
     private int bufferFrames = 64;
     public int BufferFrames { get => bufferFrames; set => Set(ref bufferFrames, value); }
     public static IReadOnlyList<string> RecordingFormats { get; } = ["24-bit", "32-bit float"];
-    public string RecordingFolder { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyMusic), "Lavboard");
+    public string RecordingFolder { get => recordingFolder; set => Set(ref recordingFolder, value); }
 
     public bool CanRecord => Tracks.Count > 0;
     public bool CanAddTrack => Tracks.Count < Track.Maximum && !IsRecording;

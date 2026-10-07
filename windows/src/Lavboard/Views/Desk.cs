@@ -41,6 +41,8 @@ public sealed partial class Desk : UserControl
         app.Tracks.CollectionChanged += OnTracksChanged;
         app.PropertyChanged += OnAppChanged;
         app.MetersUpdated += (_, _) => ShowMeters();
+        // The venue note shows the latency the engine reports once it has rebuilt for the output.
+        app.Engine.Changed += (_, _) => DispatcherQueue.TryEnqueue(RefreshNotes);
         SizeChanged += (_, _) => Place();
         Rebuild();
     }

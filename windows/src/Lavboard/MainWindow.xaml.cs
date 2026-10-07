@@ -24,8 +24,8 @@ public sealed partial class MainWindow : Window
 
     private readonly AppModel app;
     private readonly Desk desk;
-    private readonly Button modeButton;
-    private readonly TextBlock modeText = new();
+    /// <summary>One mode menu per connected receiver, in mic-system order, before Settings.</summary>
+    private readonly Dictionary<IMicSystem, (Button Button, TextBlock Text)> modeButtons = [];
     private readonly Button settingsButton;
 
     public MainWindow(AppModel app)
@@ -46,29 +46,27 @@ public sealed partial class MainWindow : Window
         Grid.SetRow(transport, 3);
         Root.Children.Add(transport);
 
-        // The Mac's toolbar Menu: the name with a small chevron right after it.
-        modeButton = new Button
-        {
-            Style = (Style)Application.Current.Resources["ToolbarButton"],
-            Content = new StackPanel
-            {
-                Orientation = Orientation.Horizontal, Spacing = 4,
-                Children = { modeText, new FontIcon { Glyph = "", FontSize = 8, FontWeight = Microsoft.UI.Text.FontWeights.Bold, Margin = new Thickness(0, 2, 0, 0) } },
-            },
-        };
-        var modeMenu = new MenuFlyout { Placement = FlyoutPlacementMode.BottomEdgeAlignedRight };
-        modeMenu.Opening += (_, _) => FillModes(modeMenu);
-        modeButton.Flyout = modeMenu;
         settingsButton = new Button { Content = "Settings", Style = (Style)Application.Current.Resources["ToolbarButton"] };
         settingsButton.Flyout = new Flyout
         {
             Placement = FlyoutPlacementMode.Bottom, ShouldConstrainToRootBounds = false, FlyoutPresenterStyle = (Style)Application.Current.Resources["PopoverPresenter"],
             Content = new SettingsView(app),
         };
-        Toolbar.Children.Add(modeButton);
+        foreach (var system in app.MicSystems)
+        {
+            var button = ModeButton(system, out var text);
+            modeButtons[system] = (button, text);
+            Toolbar.Children.Add(button);
+        }
         Toolbar.Children.Add(settingsButton);
 
         AddMuteKeys();
+        // Start with nothing visibly focused, as on the Mac, so the first button wears no focus
+        // ring and the 1-8 mute keys work straight away.
+        var focusSink = new ContentControl { IsTabStop = true, Width = 0, Height = 0, UseSystemFocusVisuals = false };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAccessibilityView(focusSink, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
+        Root.Children.Insert(0, focusSink);
+        Root.Loaded += (_, _) => focusSink.Focus(FocusState.Programmatic);
         app.PropertyChanged += OnAppChanged;
         foreach (var system in app.MicSystems) system.PropertyChanged += (_, _) => DispatcherQueue.TryEnqueue(Refresh);
         app.Engine.Changed += (_, _) => DispatcherQueue.TryEnqueue(Refresh);
@@ -148,22 +146,42 @@ public sealed partial class MainWindow : Window
 
     // MARK: Receiver mode
 
-    private IMicSystem? ModeSystem => app.MicSystems.FirstOrDefault(s => s.IsConnected && !s.IsSwitchingMode && s.Modes.Any(m => m.Id == s.CurrentModeId));
-
-    private void RefreshMode()
+    /// <summary>The Mac's toolbar Menu: the current mode with a small chevron right after it.</summary>
+    private Button ModeButton(IMicSystem system, out TextBlock text)
     {
-        var system = ModeSystem;
-        modeButton.Visibility = system == null ? Visibility.Collapsed : Visibility.Visible;
-        if (system == null) return;
-        modeText.Text = system.Modes.First(m => m.Id == system.CurrentModeId).Name;
-        modeButton.IsEnabled = !app.IsRecording;
-        ToolTipService.SetToolTip(modeButton, $"{system.Name} receiver mode");
+        text = new TextBlock();
+        var button = new Button
+        {
+            Style = (Style)Application.Current.Resources["ToolbarButton"], Visibility = Visibility.Collapsed,
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, Spacing = 4,
+                Children = { text, new FontIcon { Glyph = "", FontSize = 8, FontWeight = Microsoft.UI.Text.FontWeights.Bold, Margin = new Thickness(0, 2, 0, 0) } },
+            },
+        };
+        ToolTipService.SetToolTip(button, $"{system.Name} receiver mode");
+        var menu = new MenuFlyout { Placement = FlyoutPlacementMode.BottomEdgeAlignedRight };
+        menu.Opening += (_, _) => FillModes(menu, system);
+        button.Flyout = menu;
+        return button;
     }
 
-    private void FillModes(MenuFlyout menu)
+    /// <summary>Shows a mode menu for each receiver that is connected, not restarting, and reports its mode.</summary>
+    private void RefreshMode()
+    {
+        foreach (var (system, (button, text)) in modeButtons)
+        {
+            var current = system.IsConnected && !system.IsSwitchingMode ? system.Modes.FirstOrDefault(m => m.Id == system.CurrentModeId) : null;
+            button.Visibility = current == null ? Visibility.Collapsed : Visibility.Visible;
+            if (current == null) continue;
+            text.Text = current.Name;
+            button.IsEnabled = !app.IsRecording;
+        }
+    }
+
+    private void FillModes(MenuFlyout menu, IMicSystem system)
     {
         menu.Items.Clear();
-        if (ModeSystem is not { } system) return;
         foreach (var mode in system.Modes)
         {
             bool current = mode.Id == system.CurrentModeId;
