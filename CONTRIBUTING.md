@@ -73,6 +73,10 @@ Optional. Implement only what the hardware supports, and the app shows only thos
 
 Modules are compiled into the app and reviewed as pull requests. Lavboard deliberately doesn't load plug-ins at runtime: notarization and the hardened runtime depend on library validation, and code that talks to hardware deserves review.
 
+### On Windows
+
+The Windows app in [`windows/`](windows/README.md) has the same contract in C#: `IMicSystem` in [`windows/src/Lavboard.Core/MicSystems.cs`](windows/src/Lavboard.Core/MicSystems.cs). A Windows module is one class under `windows/src/Lavboard.Core/MicSystems/`, listed in `App.Live()` in `windows/src/Lavboard/App.xaml.cs`. Use the same `id` as the macOS module, so saved tracks mean the same thing on both. `IsReceiver` gets the endpoint's USB IDs (`AudioDevice.IsUsb(vendor, products)`). Windows has no control link yet, so Windows modules are audio-only for now, like [`DjiMicMini2S.cs`](windows/src/Lavboard.Core/MicSystems/DjiMicMini2S.cs).
+
 ### Working without hardware
 
 Debug builds include a fake two-transmitter system that uses the Mac's built-in microphone as its "receiver". Every capability is simulated, which is handy for interface work:

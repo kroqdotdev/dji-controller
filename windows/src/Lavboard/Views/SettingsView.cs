@@ -24,7 +24,13 @@ public sealed partial class SettingsView : UserControl
         this.app = app;
         Content = sections;
         foreach (var system in app.MicSystems) system.PropertyChanged += OnSystemChanged;
+        app.PropertyChanged += OnAppChanged;
         Build();
+    }
+
+    private void OnAppChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(AppModel.IsRecording)) Build();
     }
 
     private void OnSystemChanged(object? sender, PropertyChangedEventArgs e)
@@ -44,6 +50,8 @@ public sealed partial class SettingsView : UserControl
             SelectedIndex = Math.Max(0, AppModel.BufferChoices.ToList().IndexOf(app.BufferFrames)),
         };
         AutomationProperties.SetName(buffer, "Audio buffer");
+        // A new buffer size rebuilds the engine, which would leave a gap in a recording.
+        buffer.IsEnabled = !app.IsRecording;
         buffer.SelectionChanged += (_, i) => app.BufferFrames = AppModel.BufferChoices[i];
         sections.Children.Add(Section(null, [Row("Audio buffer", buffer)], "Smaller buffers lower the delay but use more CPU."));
     }

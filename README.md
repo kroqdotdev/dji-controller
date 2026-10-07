@@ -16,6 +16,8 @@ Lavboard checks for updates every time it starts. When a new version is out, an 
 
 You need macOS 15 or later. Wireless mic control needs a [supported mic system](#supported-mic-systems); without one, Lavboard works as a mixer for your other inputs.
 
+A native Windows version is in progress in [`windows/`](windows/README.md). It isn't released yet.
+
 ## What it does
 
 - **Up to eight tracks**, each with a live meter, fader and mute. Start with one per DJI transmitter (with battery status), then click **Add track** for a USB mic, the built-in mic, a webcam, a Bluetooth mic, a channel on an audio interface, or the sound of an app. Remove any track you don't need. Right-click a strip to rename, recolour, re-source, reorder or remove it.

@@ -28,3 +28,14 @@ EXPORTS
     ; Windows device layer
     LbEngineVersion
     LbListDevices
+    LbWatchDevices
+    LbListAudioSessions
+    LbGetInputGain
+    LbSetInputGain
+    LbEngineCreate
+    LbEngineStart
+    LbEngineStop
+    LbEngineDestroy
+    LbEngineIsRunning
+    LbEngineReadInputStats
+    LbEngineReadOutputStats

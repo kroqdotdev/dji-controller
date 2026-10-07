@@ -1,4 +1,7 @@
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Lavboard.Core;
+using Lavboard.MicSystems;
 using Lavboard.Model;
 
 namespace Lavboard;
@@ -21,11 +24,12 @@ public partial class App : Application
     {
         try
         {
-            // Until the WASAPI engine lands, every launch shows a demo desk (later: only with --scene).
+            // `--scene <name>` shows a demo desk instead of the real devices (see DemoScenes).
             var commandLine = Environment.GetCommandLineArgs();
             int scene = Array.IndexOf(commandLine, "--scene");
-            var model = DemoScenes.Create(scene >= 0 && scene + 1 < commandLine.Length ? commandLine[scene + 1] : null);
+            var model = scene >= 0 ? DemoScenes.Create(scene + 1 < commandLine.Length ? commandLine[scene + 1] : null) : Live();
             window = new MainWindow(model);
+            window.Closed += (_, _) => settingsStore?.Save();
             window.Activate();
             model.Start();
         }
@@ -34,6 +38,20 @@ public partial class App : Application
             LogCrash(e);
             throw;
         }
+    }
+
+    private SettingsStore? settingsStore;
+
+    /// <summary>The real engine, with every supported mic system and the saved settings.</summary>
+    private AppModel Live()
+    {
+        IMicSystem[] systems = [new DjiMicMini2S()];
+        var ui = DispatcherQueue.GetForCurrentThread();
+        var settings = Settings.Load(Settings.DefaultPath);
+        var model = new AppModel(new WasapiEngine(systems, ui), systems, settings.Tracks ?? Track.DefaultSet());
+        SettingsStore.Apply(settings, model);
+        settingsStore = new SettingsStore(model, Settings.DefaultPath, ui);
+        return model;
     }
 
     private static void LogCrash(Exception e)

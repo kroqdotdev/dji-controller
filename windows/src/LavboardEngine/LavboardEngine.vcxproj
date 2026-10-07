@@ -60,7 +60,7 @@
     </ClCompile>
     <Link>
       <ModuleDefinitionFile>LavboardEngine.def</ModuleDefinitionFile>
-      <AdditionalDependencies>ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ole32.lib;avrt.lib;mmdevapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -72,11 +72,14 @@
       <AdditionalOptions>/experimental:c11atomics %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <ClCompile Include="Devices.cpp" />
+    <ClCompile Include="Mixer.cpp" />
+    <ClCompile Include="Wasapi.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\Shared\AudioCore\AudioCore.h" />
     <ClInclude Include="..\..\..\Shared\AudioCore\AudioCorePlatform.h" />
     <ClInclude Include="Engine.h" />
+    <ClInclude Include="Wasapi.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="LavboardEngine.def" />

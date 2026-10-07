@@ -5,7 +5,7 @@ A native Windows build of Lavboard, in progress. The macOS app in `App/` is the 
 ## Layout
 
 - `src/LavboardEngine`: the native audio engine, a C++ DLL. It compiles the real-time mixer and resampler from `Shared/AudioCore` (the same C code the macOS app runs) and adds the Windows device layer on WASAPI.
-- `src/Lavboard.Core`: P/Invoke bindings to the engine and managed wrappers, shared by the app and the tests.
+- `src/Lavboard.Core`: everything testable without a window: tracks, the mic-system contract and modules, engine planning, recording, settings, and P/Invoke bindings to the engine.
 - `src/Lavboard`: the app, WinUI 3 on the Windows App SDK, unpackaged and self-contained.
   - `Themes/`: the console design tokens (`Console.xaml`, transcribed from the macOS `Theme.swift`) and control templates.
   - `Controls/`: the console's parts: LED meters, faders, keys, tape labels, and macOS-style pop-up buttons, check boxes, switches and segmented controls.
@@ -14,6 +14,10 @@ A native Windows build of Lavboard, in progress. The macOS app in `App/` is the 
   - `Assets/Fonts/`: Inter and Barlow Condensed (SIL Open Font License), standing in for SF Pro and its condensed widths.
 - `tests/Lavboard.Tests`: xunit tests that run the shared core through the DLL, checking that the MSVC build behaves like the macOS one.
 - `tools/`: helpers for building and testing over SSH.
+
+## How the engine works
+
+Windows has no aggregate devices, so the engine does by hand what a macOS aggregate does. One endpoint clocks the mixer: a wireless receiver if a track uses one, else the first other input a track uses (never Bluetooth), else an output. Its audio reaches the mixer directly, on a pro-audio thread driven by its WASAPI events. Every other input, app audio (process loopback) and every output that isn't the clock runs on its own thread through the shared async resampler, which follows that device's clock with the same drift control the macOS app uses for Bluetooth mics. `EnginePlan` in Lavboard.Core makes those choices, and its tests pin them down.
 
 ## Building
 
@@ -30,6 +34,20 @@ windows\artifacts\bin\Lavboard\Debug\net10.0-windows10.0.26100.0\win-x64\Lavboar
 Until the WASAPI engine lands, the app shows a demo desk. `--scene readme` (the default) stages the README screenshot; `--scene parity` and `--scene compact` stage scenes a macOS debug build can show too.
 
 `dotnet build` can't build the C++ engine, so use Visual Studio's `msbuild` (or open `Lavboard.slnx` in Visual Studio).
+
+## Testing with real devices
+
+`tools/LavProbe` runs the engine without the window, for testing with real devices:
+
+```powershell
+LavProbe devices                                   # endpoints, formats, USB IDs
+LavProbe apps                                      # apps with audio sessions
+LavProbe tone tone.wav --freq 1000 --level -12     # a test tone to play
+LavProbe run --track "dev=CABLE Output:0" --venue "Speakers" --seconds 20 --record out
+LavProbe analyze "out\Session ...\01 Track 1.wav" --freq 1000
+```
+
+`run` prints meters and each resampler's buffer, correction and underruns every second; `analyze` reports a recording's level, frequency, dropouts and clicks. With [VB-CABLE](https://vb-audio.com/Cable/), play the tone into CABLE Input and capture CABLE Output.
 
 ## Testing over SSH
 

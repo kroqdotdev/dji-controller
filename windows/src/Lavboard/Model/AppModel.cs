@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using Lavboard.Core;
 using Microsoft.UI.Dispatching;
 
 namespace Lavboard.Model;
@@ -27,6 +28,7 @@ public sealed partial class AppModel : ObservableObject
     private bool backupOnTransmitters;
     private bool isRecording;
     private DateTime? recordingStartedAt;
+    private IRecording? recording;
     private string? lastRecordingFolder;
     private string? recordingError;
     private string recordingFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyMusic), "Lavboard");
@@ -46,8 +48,8 @@ public sealed partial class AppModel : ObservableObject
         foreach (var system in micSystems) system.PropertyChanged += (_, _) => RaiseStatus();
     }
 
-    public double StreamLevelDb { get => streamLevelDb; set => Set(ref streamLevelDb, value); }
-    public double VenueLevelDb { get => venueLevelDb; set => Set(ref venueLevelDb, value); }
+    public double StreamLevelDb { get => streamLevelDb; set { if (Set(ref streamLevelDb, value)) Engine.SetLevels(streamLevelDb, venueLevelDb); } }
+    public double VenueLevelDb { get => venueLevelDb; set { if (Set(ref venueLevelDb, value)) Engine.SetLevels(streamLevelDb, venueLevelDb); } }
     public string? StreamOutputId { get => streamOutputId; set { if (Set(ref streamOutputId, value)) Reconfigure(); } }
     public string? VenueOutputId { get => venueOutputId; set { if (Set(ref venueOutputId, value)) Reconfigure(); } }
     public string RecordingFormat { get => recordingFormat; set => Set(ref recordingFormat, value); }
@@ -63,11 +65,11 @@ public sealed partial class AppModel : ObservableObject
     public string? RecordingError { get => recordingError; private set => Set(ref recordingError, value); }
     public static IReadOnlyList<int> BufferChoices { get; } = [32, 64, 128, 256];
     private int bufferFrames = 64;
-    public int BufferFrames { get => bufferFrames; set => Set(ref bufferFrames, value); }
+    public int BufferFrames { get => bufferFrames; set { if (Set(ref bufferFrames, value)) Engine.SetBufferFrames(value); } }
     public static IReadOnlyList<string> RecordingFormats { get; } = ["24-bit", "32-bit float"];
     public string RecordingFolder { get => recordingFolder; set => Set(ref recordingFolder, value); }
 
-    public bool CanRecord => Tracks.Count > 0;
+    public bool CanRecord => Tracks.Count > 0 && Engine.CanRecord;
     public bool CanAddTrack => Tracks.Count < Track.Maximum && !IsRecording;
     /// <summary>Tracks can't be added, removed or re-sourced mid-recording: the files are fixed at the start.</summary>
     public bool CanEditTracks => !IsRecording;
@@ -76,6 +78,8 @@ public sealed partial class AppModel : ObservableObject
 
     public void Start()
     {
+        Engine.SetLevels(StreamLevelDb, VenueLevelDb);
+        Engine.SetBufferFrames(BufferFrames);
         Reconfigure();
         meterTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
         meterTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / 30);
@@ -89,24 +93,65 @@ public sealed partial class AppModel : ObservableObject
         Span<float> right = stackalloc float[Track.Maximum];
         Engine.ReadMeters(left, right, out float stream, out float venue);
         Meters.Update(left, right, stream, venue);
+        if (recording?.Failure is { } failure)
+        {
+            StopRecording();
+            RecordingError = $"Recording stopped: {failure}.";
+        }
         MetersUpdated?.Invoke(this, EventArgs.Empty);
     }
 
     // MARK: Recording
 
-    /// <summary>Starts or stops a session. The recorder itself comes with the WASAPI engine.</summary>
+    /// <summary>Starts or stops a session: a file per track plus the stream mix, and the transmitters' own backup.</summary>
     public void ToggleRecording()
     {
         if (IsRecording)
         {
-            IsRecording = false;
-            RecordingStartedAt = null;
+            StopRecording();
             return;
         }
         if (!CanRecord) return;
-        LastRecordingFolder = Path.Combine(RecordingFolder, $"Session {DateTime.Now:yyyy-MM-dd HH.mm.ss}");
+        RecordingError = null;
+        try
+        {
+            recording = Engine.StartRecording(RecordingFolder, Tracks.Select(t => (t.Name, t.Source.IsStereo ? 2 : 1)).ToList(),
+                                              Lavboard.Core.RecordingFormats.Parse(RecordingFormat));
+        }
+        catch (InvalidOperationException e)
+        {
+            RecordingError = e.Message;
+            return;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            RecordingError = $"Couldn't start recording: {e.Message}";
+            return;
+        }
+        LastRecordingFolder = recording.Folder;
         RecordingStartedAt = DateTime.Now;
         IsRecording = true;
+        SetTransmitterRecording(true);
+    }
+
+    /// <summary>Finishes the files; also called when the window closes mid-recording.</summary>
+    public void StopRecording()
+    {
+        if (recording == null) return;
+        var finished = recording;
+        ulong dropped = finished.Stop();
+        recording = null;
+        IsRecording = false;
+        RecordingStartedAt = null;
+        SetTransmitterRecording(false);
+        if (dropped > 0) RecordingError = $"Recording dropped {dropped} buffers (disk too slow).";
+        if (finished.Failure is { } failure) RecordingError = $"Recording stopped: {failure}.";
+    }
+
+    private void SetTransmitterRecording(bool on)
+    {
+        if (!BackupOnTransmitters) return;
+        foreach (var system in MicSystems.Where(s => s.CanRecordOnTransmitters && s.IsConnected)) system.SetTransmitterRecording(on);
     }
 
     // MARK: Tracks
@@ -191,6 +236,7 @@ public sealed partial class AppModel : ObservableObject
     {
         get
         {
+            if (Engine.MicrophoneBlocked) return "Microphone access is off";
             if (Engine.Failure is { } failure) return failure;
             if (Engine.Warning is { } warning) return warning;
             string tracks = Tracks.Count == 1 ? "1 track" : $"{Tracks.Count} tracks";
@@ -206,5 +252,6 @@ public sealed partial class AppModel : ObservableObject
     {
         Raise(nameof(Title));
         Raise(nameof(Subtitle));
+        Raise(nameof(CanRecord));
     }
 }

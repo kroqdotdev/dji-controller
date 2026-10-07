@@ -254,7 +254,9 @@ public sealed partial class TrackStrip : UserControl
         }
         if (source is DeviceSource d && app.Engine.DeviceGain(d) is { } input)
         {
-            stepper.Show($"{input.Db:0} dB", true, false, input.Db > input.Min, input.Db < input.Max);
+            // Rounded -0.4 dB would read "-0 dB"; whole dB, as on the Mac, with zero unsigned.
+            double shown = Math.Round(input.Db) is var whole && whole == 0 ? 0 : whole;
+            stepper.Show($"{shown:0} dB", true, false, input.Db > input.Min, input.Db < input.Max);
             ShowGainRow("Input gain", "The device's own input gain");
             return;
         }

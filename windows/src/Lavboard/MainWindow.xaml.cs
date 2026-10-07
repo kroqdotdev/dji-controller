@@ -74,6 +74,8 @@ public sealed partial class MainWindow : Window
 
         SizeWindow();
         Refresh();
+        // Closing mid-recording finishes the files, as quitting does on the Mac.
+        Closed += (_, _) => app.StopRecording();
     }
 
     private void OnAppChanged(object? sender, PropertyChangedEventArgs e) => Refresh();
@@ -213,6 +215,12 @@ public sealed partial class MainWindow : Window
     private void RefreshBanners()
     {
         Banners.Children.Clear();
+        if (app.Engine.MicrophoneBlocked)
+        {
+            var open = new Button { Content = "Open privacy settings", FontSize = 13 };
+            open.Click += (_, _) => _ = Launcher.LaunchUriAsync(new Uri("ms-settings:privacy-microphone"));
+            Banners.Children.Add(Banner("Lavboard can't hear any mic because microphone access is off. Turn on \"Let desktop apps access your microphone\" in Privacy & security, then reopen Lavboard.", open));
+        }
         foreach (var system in app.MicSystems)
         {
             if (system.Notice is not { } notice || !app.Tracks.Any(t => t.Source is TransmitterSource ts && ts.System == system.Id)) continue;

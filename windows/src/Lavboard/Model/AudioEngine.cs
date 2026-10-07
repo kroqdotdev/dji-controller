@@ -21,6 +21,8 @@ public interface IAudioEngine
     double? TrackLatencyMs(int index);
     double? VenueLatencyMs { get; }
     string? Warning { get; }
+    /// <summary>Windows' microphone privacy setting keeps desktop apps from capturing.</summary>
+    bool MicrophoneBlocked { get; }
     string? Failure { get; }
 
     /// <summary>The input device's own gain, for devices that let apps change it.</summary>
@@ -28,6 +30,19 @@ public interface IAudioEngine
     void SetDeviceGain(DeviceSource source, double db);
 
     void Configure(IReadOnlyList<Track> tracks, string? streamOutputId, string? venueOutputId);
+    /// <summary>Output levels of the two mixes, in dB (-60 is off).</summary>
+    void SetLevels(double streamDb, double venueDb);
+    /// <summary>The mixer period to ask devices for, in frames.</summary>
+    void SetBufferFrames(int frames);
+    /// <summary>Running with the current tracks' layout, so a recording gets every track.</summary>
+    bool CanRecord { get; }
+    /// <summary>
+    /// Records every track (raw, pre-fader) and the stream mix into a new session folder inside
+    /// <paramref name="folder"/>. Throws IOException, UnauthorizedAccessException or
+    /// InvalidOperationException with a message for the user.
+    /// </summary>
+    IRecording StartRecording(string folder, IReadOnlyList<(string Name, int Channels)> tracks, RecordingFormat format);
+
     /// <summary>Peaks since the previous call, linear 0...1.</summary>
     void ReadMeters(Span<float> left, Span<float> right, out float stream, out float venue);
 }

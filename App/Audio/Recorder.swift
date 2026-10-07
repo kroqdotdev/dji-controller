@@ -46,7 +46,14 @@ final class Recorder {
         }
         let stamp = DateFormatter()
         stamp.dateFormat = "yyyy-MM-dd HH.mm.ss"
-        let session = folder.appendingPathComponent("Session \(stamp.string(from: Date()))")
+        // Two sessions started within a second get "Session ... (2)": never write into an existing one.
+        let name = "Session \(stamp.string(from: Date()))"
+        var session = folder.appendingPathComponent(name)
+        var n = 2
+        while FileManager.default.fileExists(atPath: session.path) {
+            session = folder.appendingPathComponent("\(name) (\(n))")
+            n += 1
+        }
         do {
             try FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)
             let files = tracks.enumerated().map { i, track in
