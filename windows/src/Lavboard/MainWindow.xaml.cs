@@ -52,6 +52,8 @@ public sealed partial class MainWindow : Window
             Placement = FlyoutPlacementMode.Bottom, ShouldConstrainToRootBounds = false, FlyoutPresenterStyle = (Style)Application.Current.Resources["PopoverPresenter"],
             Content = new SettingsView(app),
         };
+        // Like the Mac's toolbar: the update capsule first, then each receiver's mode, then Settings.
+        Toolbar.Children.Add(new UpdateButton(app));
         foreach (var system in app.MicSystems)
         {
             var button = ModeButton(system, out var text);

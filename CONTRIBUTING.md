@@ -135,6 +135,16 @@ scripts/release.sh 0.2.0 --notarize --publish
 
 `--publish` creates a draft GitHub release with the DMG and `appcast.xml` attached; review it on GitHub, then publish it. Installed copies read `appcast.xml` from the latest published release and offer the update. Bump the driver's `CFBundleVersion` in `project.yml` whenever the stream device changes, so existing installs offer the driver update too.
 
+### Windows
+
+Windows releases are separate, tagged `windows-v<version>`. Push a tag and the **Windows release** workflow builds, tests and packs the app with [Velopack](https://velopack.io), then publishes a release with the installer and the update feed:
+
+```sh
+git tag windows-v0.1.0 && git push origin windows-v0.1.0
+```
+
+Windows releases are never marked latest, because the macOS app reads `appcast.xml` from the latest release; installed Windows copies find the newest `windows-v` release themselves. Builds aren't code-signed yet, so SmartScreen warns on first run. Run the workflow by hand to build and pack without publishing. See [`windows/README.md`](windows/README.md#releasing) for packing locally and testing updates.
+
 ### Update signing key
 
 Updates are signed with a Sparkle EdDSA key that lives in the maintainer's login keychain; its public half is `SUPublicEDKey` in `project.yml`. The first release on a new Mac asks for keychain access: choose **Always Allow**. Keep an offline backup of the private key, because installed copies can't verify updates signed with any other key:

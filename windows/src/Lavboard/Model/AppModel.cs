@@ -16,6 +16,7 @@ public sealed partial class AppModel : ObservableObject
     public IReadOnlyList<IMicSystem> MicSystems { get; }
     public IAudioEngine Engine { get; }
     public MeterStore Meters { get; } = new();
+    public Updater Updates { get; }
 
     /// <summary>Raised 30 times a second after the meters update.</summary>
     public event EventHandler? MetersUpdated;
@@ -34,9 +35,13 @@ public sealed partial class AppModel : ObservableObject
     private string recordingFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyMusic), "Lavboard");
     private DispatcherQueueTimer? meterTimer;
 
-    public AppModel(IAudioEngine engine, IReadOnlyList<IMicSystem> micSystems, IEnumerable<Track> tracks)
+    public AppModel(IAudioEngine engine, IReadOnlyList<IMicSystem> micSystems, IEnumerable<Track> tracks, Updater? updates = null)
     {
         Engine = engine;
+        Updates = updates ?? new Updater();
+        // Never restart into an update mid-recording, and never start a recording mid-update.
+        Updates.ShouldDeferRestart = () => IsRecording;
+        Updates.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(Updater.IsBusy)) Raise(nameof(CanRecord)); };
         MicSystems = micSystems;
         foreach (var track in tracks.Take(Track.Maximum))
         {
@@ -69,7 +74,7 @@ public sealed partial class AppModel : ObservableObject
     public static IReadOnlyList<string> RecordingFormats { get; } = ["24-bit", "32-bit float"];
     public string RecordingFolder { get => recordingFolder; set => Set(ref recordingFolder, value); }
 
-    public bool CanRecord => Tracks.Count > 0 && Engine.CanRecord;
+    public bool CanRecord => Tracks.Count > 0 && Engine.CanRecord && !Updates.IsBusy;
     public bool CanAddTrack => Tracks.Count < Track.Maximum && !IsRecording;
     /// <summary>Tracks can't be added, removed or re-sourced mid-recording: the files are fixed at the start.</summary>
     public bool CanEditTracks => !IsRecording;

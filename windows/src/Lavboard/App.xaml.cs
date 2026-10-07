@@ -11,8 +11,7 @@ public partial class App : Application
     private Window? window;
 
     /// <summary>Where a crash leaves its exception, so a report can include it.</summary>
-    public static string CrashLogPath { get; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Lavboard", "crash.log");
+    public static string CrashLogPath { get; } = Path.Combine(Settings.DataFolder, "crash.log");
 
     public App()
     {
@@ -32,6 +31,14 @@ public partial class App : Application
             window.Closed += (_, _) => settingsStore?.Save();
             window.Activate();
             model.Start();
+            // Installing an update exits the process: save first, and let the audio go cleanly.
+            model.Updates.Restarting += (_, _) =>
+            {
+                model.StopRecording();
+                settingsStore?.Save();
+                (model.Engine as IDisposable)?.Dispose();
+            };
+            if (scene < 0) _ = model.Updates.StartAsync();
         }
         catch (Exception e)
         {
