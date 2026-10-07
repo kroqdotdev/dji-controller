@@ -115,6 +115,14 @@ public sealed unsafe class NativeEngine : IDisposable
         lock (gate) Native.LbEngineStop(engine);
     }
 
+    /// <summary>The venue's (0) or stream's (1) resampler, when that output isn't the clock.</summary>
+    public AudioCoreAsyncStats OutputStats(int output)
+    {
+        AudioCoreAsyncStats stats;
+        Native.LbEngineReadOutputStats(engine, output, &stats);
+        return stats;
+    }
+
     public AudioCoreAsyncStats InputStats(int input)
     {
         AudioCoreAsyncStats stats;

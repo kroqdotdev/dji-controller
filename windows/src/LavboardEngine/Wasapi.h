@@ -84,4 +84,8 @@ private:
 /// "0x88890004" style text for an HRESULT the user can't act on but support can.
 std::wstring hresultText(HRESULT hr);
 
+/// Why a stream didn't open or start, worded to follow the device's name: "is in use by another
+/// app", or "couldn't start (0x...)" for the rest.
+std::wstring startFailure(HRESULT hr);
+
 } // namespace lavboard

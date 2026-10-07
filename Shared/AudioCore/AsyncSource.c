@@ -91,6 +91,7 @@ struct AudioCoreAsyncSource {
     float *ring; // RING_FRAMES x channels, interleaved
     _Atomic uint64_t writePos; // frames written; producer only
     _Atomic uint64_t readPos;  // oldest frame the consumer still needs
+    _Atomic uint32_t chunk;    // frames in the producer's latest delivery
 
     // Consumer state, owned by the mixer IOProc.
     bool primed;
@@ -161,6 +162,7 @@ OSStatus AudioCoreAsyncIOProc(AudioObjectID device, const AudioTimeStamp *now,
     }
     if (frames == 0) return noErr;
     if (frames > RING_FRAMES / 2) frames = RING_FRAMES / 2;
+    atomic_store_explicit(&s->chunk, frames, memory_order_relaxed);
 
     uint64_t w = atomic_load_explicit(&s->writePos, memory_order_relaxed);
     uint64_t r = atomic_load_explicit(&s->readPos, memory_order_acquire);
@@ -196,6 +198,16 @@ static void setPosition(AudioCoreAsyncSource *s, double pos) {
     s->frac = pos - (double)s->base;
 }
 
+/// How far behind the newest frame to read from when (re)starting, so the controller's measure
+/// starts at the target rather than below it. Right after a delivery the buffer is at the top of
+/// its sawtooth, half a delivery above its average; and the controller samples it just after each
+/// read, half a read below the average again. Starting at the bare target would leave the measure
+/// short by both, which the slow loop takes many seconds (and a pitch offset) to make up.
+static double startLead(AudioCoreAsyncSource *s, uint32_t frames) {
+    double delivery = (double)atomic_load_explicit(&s->chunk, memory_order_relaxed);
+    return s->target + 0.5 * delivery + 0.5 * (double)frames * s->nominalStep;
+}
+
 void AudioCoreAsyncRender(AudioCoreAsyncSource *s, uint32_t frames) {
     if (frames > AC_ASYNC_MAX_FRAMES) frames = AC_ASYNC_MAX_FRAMES;
     const int H = s->halfTaps;
@@ -205,9 +217,10 @@ void AudioCoreAsyncRender(AudioCoreAsyncSource *s, uint32_t frames) {
 
     if (!s->primed) {
         uint64_t r = atomic_load_explicit(&s->readPos, memory_order_relaxed);
-        if ((double)(w - r) >= s->target + H) {
+        double lead = startLead(s, frames);
+        if ((double)(w - r) >= lead + H) {
             s->primed = true;
-            setPosition(s, (double)w - s->target);
+            setPosition(s, (double)w - lead);
             s->filtered = s->target;
             s->integral = 0;
             s->correction = 0;
@@ -261,7 +274,7 @@ void AudioCoreAsyncRender(AudioCoreAsyncSource *s, uint32_t frames) {
         double buffered = (double)w - ((double)s->base + s->frac);
         if (buffered > 2 * s->target + 0.05 * s->sourceRate) {
             // A burst after a stall: skip ahead rather than slowly speeding through it.
-            setPosition(s, (double)w - s->target);
+            setPosition(s, (double)w - startLead(s, frames));
             buffered = s->target;
             s->filtered = s->target;
             s->integral = 0;

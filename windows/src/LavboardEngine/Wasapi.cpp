@@ -30,6 +30,16 @@ std::wstring hresultText(HRESULT hr) {
     return text;
 }
 
+std::wstring startFailure(HRESULT hr) {
+    switch (hr) {
+    case AUDCLNT_E_DEVICE_IN_USE: return L"is in use by another app";
+    case AUDCLNT_E_DEVICE_INVALIDATED: return L"was disconnected";
+    case E_ACCESSDENIED: return L"is blocked by the Windows privacy settings";
+    case AUDCLNT_E_UNSUPPORTED_FORMAT: return L"uses an unsupported audio format";
+    default: return L"couldn't start (" + hresultText(hr) + L")";
+    }
+}
+
 Stream::~Stream() {
     stop();
     if (event_) CloseHandle(event_);
@@ -86,8 +96,7 @@ std::wstring Stream::open(const std::wstring &id, bool capture, uint32_t periodF
     }
     if (!initialised) {
         hr = client_->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 0, 0, format, nullptr);
-        if (hr == E_ACCESSDENIED) return L"is blocked by the Windows privacy settings";
-        if (FAILED(hr)) return L"couldn't start (" + hresultText(hr) + L")";
+        if (FAILED(hr)) return startFailure(hr);
         REFERENCE_TIME defaultPeriod = 0, minimumPeriod = 0;
         client_->GetDevicePeriod(&defaultPeriod, &minimumPeriod);
         periodFrames_ = static_cast<uint32_t>((defaultPeriod * rate_ + 5'000'000) / 10'000'000);

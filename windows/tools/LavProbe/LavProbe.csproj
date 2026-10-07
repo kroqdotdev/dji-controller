@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- A console bench for the engine without the window: list devices and apps, run tracks
+       through the real engine, record, and analyse recordings. See windows/README.md. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <Platforms>x64;ARM64</Platforms>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Lavboard.Core\Lavboard.Core.csproj" />
+  </ItemGroup>
+</Project>

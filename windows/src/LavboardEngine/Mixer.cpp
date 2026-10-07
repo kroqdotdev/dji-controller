@@ -408,8 +408,8 @@ int32_t LbEngine::start(const LbEngineConfig &config, LbEngineInfo &info, std::w
     for (int i = 0; i < sourceCount; i++) {
         Input &input = inputs[i];
         if (!input.stream) continue;
-        if (FAILED(input.stream->start())) {
-            copyText(info.inputErrors[i], LB_PROBLEM_LENGTH, L"couldn't start");
+        if (HRESULT hr = input.stream->start(); FAILED(hr)) {
+            copyText(info.inputErrors[i], LB_PROBLEM_LENGTH, startFailure(hr));
             continue;
         }
         info.inputRunning[i] = 1;
@@ -418,15 +418,15 @@ int32_t LbEngine::start(const LbEngineConfig &config, LbEngineInfo &info, std::w
     if (clockIsInput) info.inputRunning[0] = 1;
     for (auto [output, errorText] : {std::pair{&venue, info.venueError}, std::pair{&stream, info.streamError}}) {
         if (!output->stream) continue;
-        if (FAILED(output->stream->start())) {
-            copyText(errorText, LB_PROBLEM_LENGTH, L"couldn't start");
+        if (HRESULT hr = output->stream->start(); FAILED(hr)) {
+            copyText(errorText, LB_PROBLEM_LENGTH, startFailure(hr));
             output->active = false;
             continue;
         }
         output->thread = std::thread(&LbEngine::runOutput, this, output);
     }
     if (HRESULT hr = clock->start(); FAILED(hr)) {
-        error = L"couldn't start (" + hresultText(hr) + L")";
+        error = startFailure(hr);
         stopLocked();
         return -3;
     }
@@ -452,6 +452,15 @@ extern "C" void LbEngineStop(LbEngine *engine) {
 extern "C" void LbEngineDestroy(LbEngine *engine) { delete engine; }
 
 extern "C" int32_t LbEngineIsRunning(LbEngine *engine) { return engine && engine->running ? 1 : 0; }
+
+extern "C" void LbEngineReadOutputStats(LbEngine *engine, int32_t output, AudioCoreAsyncStats *out) {
+    if (!out) return;
+    *out = {};
+    if (!engine || output < 0 || output > 1) return;
+    std::lock_guard lock(engine->lifecycle);
+    const auto &o = output == 0 ? engine->venue : engine->stream;
+    if (o.source) AudioCoreAsyncReadStats(o.source, out);
+}
 
 extern "C" void LbEngineReadInputStats(LbEngine *engine, int32_t input, AudioCoreAsyncStats *out) {
     if (!out) return;

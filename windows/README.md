@@ -35,6 +35,20 @@ Until the WASAPI engine lands, the app shows a demo desk. `--scene readme` (the 
 
 `dotnet build` can't build the C++ engine, so use Visual Studio's `msbuild` (or open `Lavboard.slnx` in Visual Studio).
 
+## Testing with real devices
+
+`tools/LavProbe` runs the engine without the window, for testing with real devices:
+
+```powershell
+LavProbe devices                                   # endpoints, formats, USB IDs
+LavProbe apps                                      # apps with audio sessions
+LavProbe tone tone.wav --freq 1000 --level -12     # a test tone to play
+LavProbe run --track "dev=CABLE Output:0" --venue "Speakers" --seconds 20 --record out
+LavProbe analyze "out\Session ...\01 Track 1.wav" --freq 1000
+```
+
+`run` prints meters and each resampler's buffer, correction and underruns every second; `analyze` reports a recording's level, frequency, dropouts and clicks. With [VB-CABLE](https://vb-audio.com/Cable/), play the tone into CABLE Input and capture CABLE Output.
+
 ## Testing over SSH
 
 SSH sessions have no desktop. On the dev VM, `Start-Gui.ps1` launches an app on the logged-in desktop and `Get-Screenshot.ps1` captures it. `tools/Focus-Window.ps1` brings a window to the front first, since Windows won't let a background launch take the foreground.

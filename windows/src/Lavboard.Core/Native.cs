@@ -164,6 +164,7 @@ public static unsafe partial class Native
     [LibraryImport(Engine)] public static partial void LbEngineDestroy(IntPtr engine);
     [LibraryImport(Engine)] public static partial int LbEngineIsRunning(IntPtr engine);
     [LibraryImport(Engine)] public static partial void LbEngineReadInputStats(IntPtr engine, int input, AudioCoreAsyncStats* stats);
+    [LibraryImport(Engine)] public static partial void LbEngineReadOutputStats(IntPtr engine, int output, AudioCoreAsyncStats* stats);
 
     [LibraryImport(Engine)] public static partial IntPtr AudioCoreCreate(uint ringFramesPowerOfTwo);
     [LibraryImport(Engine)] public static partial void AudioCoreDestroy(IntPtr core);

@@ -92,6 +92,22 @@ public class AsyncSourceTests
         Assert.Equal(0ul, h.Stats.Underruns);
     }
 
+    /// <summary>
+    /// A device that delivers in bursts (WASAPI loopback: 480 frames every 10 ms) on the mixer's own
+    /// clock needs no correction, so the resampler must start with the right amount buffered
+    /// rather than pull the pitch for the 20 s its slow loop takes to settle.
+    /// </summary>
+    [Fact]
+    public void StartsOnTargetWhenTheDeviceDeliversInBursts()
+    {
+        using var h = new AsyncHarness(48_000, Sine(1_000, 48_000), latency: 1_072, chunk: 480);
+        h.Run(2, keep: false, frames: 128);
+        Assert.InRange(h.Stats.Correction, -1e-4, 1e-4);
+        var output = h.Run(5, frames: 128);
+        Assert.InRange(Frequency(output, 48_000), 999.95, 1_000.05);
+        Assert.Equal(0ul, h.Stats.Underruns);
+    }
+
     [Theory]
     [InlineData(1.001)]
     [InlineData(0.9995)]

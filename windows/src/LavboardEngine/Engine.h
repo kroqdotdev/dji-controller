@@ -134,6 +134,8 @@ void LbEngineDestroy(LbEngine *engine);
 int32_t LbEngineIsRunning(LbEngine *engine);
 /// Stats of input `input`'s resampler (zeros for the clock input or an input that isn't running).
 void LbEngineReadInputStats(LbEngine *engine, int32_t input, AudioCoreAsyncStats *out);
+/// Stats of an output's resampler: 0 for the venue, 1 for the stream (zeros when it's the clock or off).
+void LbEngineReadOutputStats(LbEngine *engine, int32_t output, AudioCoreAsyncStats *out);
 
 #ifdef __cplusplus
 }
