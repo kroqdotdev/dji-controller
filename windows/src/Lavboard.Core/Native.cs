@@ -71,6 +71,51 @@ public unsafe struct LbDevice
     public int Channels;
     public int SampleRate;
     public int IsDefault;
+    public int UsbVendor;
+    public int UsbProduct;
+    public int IsBluetooth;
+}
+
+/// <summary>LbTrackSpec: channel (and channel + 1) of input <see cref="Input"/>, or -1 for silent.</summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct LbTrackSpec
+{
+    public int Input;
+    public int Channel;
+    public int Stereo;
+}
+
+[System.Runtime.CompilerServices.InlineArray(Native.MaxInputs)]
+public struct InputPointers { private IntPtr first; }
+
+[System.Runtime.CompilerServices.InlineArray(Native.MaxTracks)]
+public struct TrackSpecs { private LbTrackSpec first; }
+
+[StructLayout(LayoutKind.Sequential)]
+public struct LbEngineConfig
+{
+    public int InputCount;
+    public InputPointers InputIds;
+    public int ClockFromInput;
+    public IntPtr ClockOutputId;
+    public IntPtr VenueId;
+    public IntPtr StreamId;
+    public int TrackCount;
+    public TrackSpecs Tracks;
+    public uint PeriodFrames;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct LbEngineInfo
+{
+    public int SampleRate;
+    public int PeriodFrames;
+    public double VenueLatencyMs;
+    public fixed double TrackLatencyMs[Native.MaxTracks];
+    public fixed int InputRunning[Native.MaxInputs];
+    public fixed char InputErrors[Native.MaxInputs * Native.ProblemLength];
+    public fixed char VenueError[Native.ProblemLength];
+    public fixed char StreamError[Native.ProblemLength];
 }
 
 public static unsafe partial class Native
@@ -80,13 +125,22 @@ public static unsafe partial class Native
     public const int AsyncMaxFrames = 4096;
     public const int IdLength = 256;
     public const int NameLength = 256;
+    public const int MaxInputs = MaxTracks;
+    public const int ProblemLength = 128;
     /// <summary>The engine API version this build expects (LbEngineVersion).</summary>
-    public const int ExpectedEngineVersion = 1;
+    public const int ExpectedEngineVersion = 2;
 
     private const string Engine = "LavboardEngine";
 
     [LibraryImport(Engine)] public static partial int LbEngineVersion();
     [LibraryImport(Engine)] public static partial int LbListDevices(LbDevice* devices, int capacity);
+    [LibraryImport(Engine)] public static partial int LbWatchDevices(delegate* unmanaged<IntPtr, void> callback, IntPtr context);
+    [LibraryImport(Engine)] public static partial IntPtr LbEngineCreate(IntPtr core);
+    [LibraryImport(Engine)] public static partial int LbEngineStart(IntPtr engine, LbEngineConfig* config, LbEngineInfo* info, char* error, int errorCapacity);
+    [LibraryImport(Engine)] public static partial void LbEngineStop(IntPtr engine);
+    [LibraryImport(Engine)] public static partial void LbEngineDestroy(IntPtr engine);
+    [LibraryImport(Engine)] public static partial int LbEngineIsRunning(IntPtr engine);
+    [LibraryImport(Engine)] public static partial void LbEngineReadInputStats(IntPtr engine, int input, AudioCoreAsyncStats* stats);
 
     [LibraryImport(Engine)] public static partial IntPtr AudioCoreCreate(uint ringFramesPowerOfTwo);
     [LibraryImport(Engine)] public static partial void AudioCoreDestroy(IntPtr core);

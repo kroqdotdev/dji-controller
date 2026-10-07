@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Managed side of the engine: P/Invoke bindings to LavboardEngine.dll and wrappers around them.
-       Shared by the app and the tests. -->
+  <!-- The app's model (tracks, mic systems, engine planning) and the managed side of the engine:
+       P/Invoke bindings to LavboardEngine.dll and wrappers around them. Shared by the app and the
+       tests, so everything here is testable without a window. -->
   <PropertyGroup>
     <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <Platforms>x64;ARM64</Platforms>

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Lavboard.Core;
 
 namespace Lavboard.Model;
 
@@ -35,6 +36,8 @@ public interface IMicSystem : INotifyPropertyChanged
     string Id { get; }
     string Name { get; }
     int TransmitterCount { get; }
+    /// <summary>Whether an input endpoint is this system's receiver (usually by its USB IDs).</summary>
+    bool IsReceiver(AudioDevice device);
     bool IsConnected { get; }
     IReadOnlyList<TransmitterState> Transmitters { get; }
     /// <summary>The receiver's input channel carrying a transmitter slot, or null when it has none in this mode.</summary>

@@ -12,6 +12,10 @@
 /// Real-time mixing core. Everything called from the IOProc is lock-free and allocation-free;
 /// parameter setters and meter reads are safe from any thread.
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 CF_ASSUME_NONNULL_BEGIN
 
 #define AC_MAX_TRACKS 8
@@ -118,5 +122,9 @@ const float *_Nullable AudioCoreAsyncOutput(AudioCoreAsyncSource *source, int ch
 void AudioCoreAsyncReadStats(AudioCoreAsyncSource *source, AudioCoreAsyncStats *out);
 
 CF_ASSUME_NONNULL_END
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

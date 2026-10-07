@@ -28,6 +28,10 @@ public interface IAudioEngine
     void SetDeviceGain(DeviceSource source, double db);
 
     void Configure(IReadOnlyList<Track> tracks, string? streamOutputId, string? venueOutputId);
+    /// <summary>Output levels of the two mixes, in dB (-60 is off).</summary>
+    void SetLevels(double streamDb, double venueDb);
+    /// <summary>The mixer period to ask devices for, in frames.</summary>
+    void SetBufferFrames(int frames);
     /// <summary>Peaks since the previous call, linear 0...1.</summary>
     void ReadMeters(Span<float> left, Span<float> right, out float stream, out float venue);
 }

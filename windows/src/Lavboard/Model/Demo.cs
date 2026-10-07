@@ -16,6 +16,7 @@ public sealed class DemoMicSystem(string id, string name, TransmitterState[] tra
     public string Id => id;
     public string Name => name;
     public int TransmitterCount => transmitters.Length;
+    public bool IsReceiver(AudioDevice device) => false;
     public bool IsConnected => true;
     public IReadOnlyList<TransmitterState> Transmitters => transmitters;
     /// <summary>Which transmitters have a channel of their own in which mode.</summary>
@@ -86,6 +87,9 @@ public sealed class DemoEngine(IReadOnlyList<AudioDevice> inputs, IReadOnlyList<
     public double? VenueLatencyMs => venueOutput != null ? VenueMs : null;
     public string? Warning => null;
     public string? Failure => null;
+
+    public void SetLevels(double streamDb, double venueDb) { }
+    public void SetBufferFrames(int frames) { }
 
     public InputGain? DeviceGain(DeviceSource source) => Gains.GetValueOrDefault(source.Uid);
     public void SetDeviceGain(DeviceSource source, double db)

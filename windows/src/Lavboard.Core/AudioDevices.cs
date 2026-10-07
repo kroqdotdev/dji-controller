@@ -3,7 +3,11 @@ using Lavboard.Core.Interop;
 namespace Lavboard.Core;
 
 /// <summary>An active Windows audio endpoint, as seen in its shared-mode mix format.</summary>
-public sealed record AudioDevice(string Id, string Name, bool IsInput, int Channels, int SampleRate, bool IsDefault);
+public sealed record AudioDevice(string Id, string Name, bool IsInput, int Channels, int SampleRate, bool IsDefault,
+                                 int UsbVendor = 0, int UsbProduct = 0, bool IsBluetooth = false)
+{
+    public bool IsUsb(int vendor, params int[] products) => UsbVendor == vendor && products.Contains(UsbProduct);
+}
 
 public static class AudioDevices
 {
@@ -20,7 +24,8 @@ public static class AudioDevices
             for (int i = 0; i < count; i++)
             {
                 LbDevice* d = &p[i];
-                devices.Add(new AudioDevice(new string(d->Id), new string(d->Name), d->IsInput != 0, d->Channels, d->SampleRate, d->IsDefault != 0));
+                devices.Add(new AudioDevice(new string(d->Id), new string(d->Name), d->IsInput != 0, d->Channels, d->SampleRate, d->IsDefault != 0,
+                                            d->UsbVendor, d->UsbProduct, d->IsBluetooth != 0));
             }
             return devices;
         }

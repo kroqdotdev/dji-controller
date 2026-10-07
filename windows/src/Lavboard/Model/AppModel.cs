@@ -46,8 +46,8 @@ public sealed partial class AppModel : ObservableObject
         foreach (var system in micSystems) system.PropertyChanged += (_, _) => RaiseStatus();
     }
 
-    public double StreamLevelDb { get => streamLevelDb; set => Set(ref streamLevelDb, value); }
-    public double VenueLevelDb { get => venueLevelDb; set => Set(ref venueLevelDb, value); }
+    public double StreamLevelDb { get => streamLevelDb; set { if (Set(ref streamLevelDb, value)) Engine.SetLevels(streamLevelDb, venueLevelDb); } }
+    public double VenueLevelDb { get => venueLevelDb; set { if (Set(ref venueLevelDb, value)) Engine.SetLevels(streamLevelDb, venueLevelDb); } }
     public string? StreamOutputId { get => streamOutputId; set { if (Set(ref streamOutputId, value)) Reconfigure(); } }
     public string? VenueOutputId { get => venueOutputId; set { if (Set(ref venueOutputId, value)) Reconfigure(); } }
     public string RecordingFormat { get => recordingFormat; set => Set(ref recordingFormat, value); }
@@ -63,7 +63,7 @@ public sealed partial class AppModel : ObservableObject
     public string? RecordingError { get => recordingError; private set => Set(ref recordingError, value); }
     public static IReadOnlyList<int> BufferChoices { get; } = [32, 64, 128, 256];
     private int bufferFrames = 64;
-    public int BufferFrames { get => bufferFrames; set => Set(ref bufferFrames, value); }
+    public int BufferFrames { get => bufferFrames; set { if (Set(ref bufferFrames, value)) Engine.SetBufferFrames(value); } }
     public static IReadOnlyList<string> RecordingFormats { get; } = ["24-bit", "32-bit float"];
     public string RecordingFolder { get => recordingFolder; set => Set(ref recordingFolder, value); }
 
@@ -76,6 +76,8 @@ public sealed partial class AppModel : ObservableObject
 
     public void Start()
     {
+        Engine.SetLevels(StreamLevelDb, VenueLevelDb);
+        Engine.SetBufferFrames(BufferFrames);
         Reconfigure();
         meterTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
         meterTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / 30);
