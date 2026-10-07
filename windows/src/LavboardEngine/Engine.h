@@ -126,7 +126,8 @@ LbEngine *LbEngineCreate(AudioCore *core);
 /// negative code, with the reason in `error` worded to follow the clock device's name. `info` is
 /// filled either way.
 int32_t LbEngineStart(LbEngine *engine, const LbEngineConfig *config, LbEngineInfo *info, wchar_t *error, int32_t errorCapacity);
-/// Stops every stream and leaves the core's layout silent.
+/// Stops every stream. The core keeps its tracks (count and stereo flags) but they go silent, so a
+/// recording's layout survives until the next start.
 void LbEngineStop(LbEngine *engine);
 void LbEngineDestroy(LbEngine *engine);
 /// 1 while running; 0 once stopped or after a device failed (unplugged, format changed). The

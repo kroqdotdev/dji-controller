@@ -98,6 +98,7 @@ public sealed class DemoEngine(IReadOnlyList<AudioDevice> inputs, IReadOnlyList<
 
     private sealed record DemoRecording(string Folder) : IRecording
     {
+        public string? Failure => null;
         public ulong Stop() => 0;
     }
     public void SetBufferFrames(int frames) { }

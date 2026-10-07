@@ -64,6 +64,34 @@ public sealed class RecordingTests : IDisposable
     }
 
     [Fact]
+    public void SessionsStartedInTheSameSecondGetTheirOwnFolders()
+    {
+        using var core = new CoreHarness(ringFrames: 1 << 14);
+        var now = new DateTime(2026, 10, 7, 21, 30, 5);
+        (string, int)[] tracks = [("A", 1), ("B", 1), ("C", 1), ("D", 1)];
+        var first = RecordingSession.Start(core.Core, folder, tracks, 48_000, RecordingFormat.Pcm24, now);
+        first.Stop();
+        var second = RecordingSession.Start(core.Core, folder, tracks, 48_000, RecordingFormat.Pcm24, now);
+        second.Stop();
+        Assert.Equal(Path.Combine(folder, "Session 2026-10-07 21.30.05 (2)"), second.Folder);
+        Assert.Equal(5, Directory.GetFiles(first.Folder).Length);
+    }
+
+    [Fact]
+    public unsafe void ARecordingStopsRatherThanWriteFramesThatNoLongerFit()
+    {
+        using var core = new CoreHarness(ringFrames: 1 << 14);
+        var session = RecordingSession.Start(core.Core, folder, [("A", 1), ("B", 1), ("C", 1), ("D", 1)], 48_000, RecordingFormat.Pcm24, DateTime.Now);
+        TrackLayout[] two = [TrackLayout.Mono(0, 0), TrackLayout.Mono(0, 1)];
+        fixed (TrackLayout* t = two) Native.AudioCoreSetLayout(core.Core, t, 2, 0, 1);
+        for (int i = 0; i < 10; i++) core.Cycle();
+        Thread.Sleep(100);
+        Assert.Equal("the tracks changed", session.Failure);
+        session.Stop();
+        Assert.Equal(44, new FileInfo(Directory.GetFiles(session.Folder)[0]).Length); // a valid, empty WAV
+    }
+
+    [Fact]
     public void SessionsWaitForTheTracksToBeSetUp()
     {
         using var core = new CoreHarness();

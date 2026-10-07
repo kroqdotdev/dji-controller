@@ -10,6 +10,8 @@ public enum RecordingFormat { Pcm24, Float32 }
 public interface IRecording
 {
     string Folder { get; }
+    /// <summary>Why the recording stopped writing on its own (a full or disconnected drive), worded for the user; null while it's fine.</summary>
+    string? Failure { get; }
     /// <summary>Finishes the files and returns how many buffers were dropped.</summary>
     ulong Stop();
 }
@@ -107,8 +109,13 @@ public sealed class RecordingSession : IRecording
     private readonly IntPtr core;
     private readonly WavWriter[] files;
     private readonly int[] fileChannels;
+    /// <summary>Channels per ring frame when recording started: the tracks' channels plus the stereo mix.</summary>
+    private readonly int ringChannels;
     private readonly Thread thread;
     private volatile bool stopRequested;
+    private volatile string? failure;
+
+    public string? Failure => failure;
 
     public string Folder { get; }
 
@@ -118,6 +125,7 @@ public sealed class RecordingSession : IRecording
         Folder = folder;
         this.files = files;
         this.fileChannels = fileChannels;
+        ringChannels = fileChannels.Sum();
         thread = new Thread(Run) { Name = "Recorder", IsBackground = true, Priority = ThreadPriority.AboveNormal };
     }
 
@@ -132,7 +140,10 @@ public sealed class RecordingSession : IRecording
     {
         if (Native.AudioCoreRingChannels(core) != tracks.Sum(t => t.Channels) + 2)
             throw new InvalidOperationException("Couldn't start recording: the tracks are still being set up. Try again in a moment.");
-        string folder = Path.Combine(parent, "Session " + now.ToString("yyyy-MM-dd HH.mm.ss", CultureInfo.InvariantCulture));
+        // Two sessions started within a second get "Session ... (2)": never write into an existing one.
+        string name = "Session " + now.ToString("yyyy-MM-dd HH.mm.ss", CultureInfo.InvariantCulture);
+        string folder = Path.Combine(parent, name);
+        for (int n = 2; Directory.Exists(folder); n++) folder = Path.Combine(parent, $"{name} ({n})");
         Directory.CreateDirectory(folder);
         var specs = tracks.Select((t, i) => (Name: $"{i + 1:00} {Sanitize(t.Name.Length == 0 ? $"Track {i + 1}" : t.Name)}.wav", t.Channels))
             .Append(($"{tracks.Count + 1:00} Mix.wav", 2)).ToList();
@@ -163,10 +174,29 @@ public sealed class RecordingSession : IRecording
         return meters.Overruns;
     }
 
-    private unsafe void Run()
+    private void Run()
+    {
+        try
+        {
+            Drain();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            failure = $"the recording drive is full or unavailable ({e.Message})";
+        }
+        finally
+        {
+            foreach (var file in files)
+            {
+                try { file.Dispose(); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { failure ??= $"couldn't finish the files ({e.Message})"; }
+            }
+        }
+    }
+
+    private unsafe void Drain()
     {
         const int chunk = 4096;
-        int ringChannels = Native.AudioCoreRingChannels(core);
         var interleaved = new float[chunk * ringChannels];
         var scratch = new float[chunk * 2];
         while (true)
@@ -175,6 +205,12 @@ public sealed class RecordingSession : IRecording
             uint frames;
             do
             {
+                // The core copies with its current layout; if the tracks changed, the frames no longer fit the files.
+                if (Native.AudioCoreRingChannels(core) != ringChannels)
+                {
+                    failure = "the tracks changed";
+                    return;
+                }
                 fixed (float* p = interleaved) frames = Native.AudioCoreReadRecorded(core, p, chunk);
                 if (frames == 0) break;
                 int column = 0;
@@ -192,7 +228,6 @@ public sealed class RecordingSession : IRecording
             if (stopping) break;
             Thread.Sleep(20);
         }
-        foreach (var file in files) file.Dispose();
     }
 
     private static string Sanitize(string name)

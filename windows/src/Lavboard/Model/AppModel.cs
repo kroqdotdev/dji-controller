@@ -93,6 +93,11 @@ public sealed partial class AppModel : ObservableObject
         Span<float> right = stackalloc float[Track.Maximum];
         Engine.ReadMeters(left, right, out float stream, out float venue);
         Meters.Update(left, right, stream, venue);
+        if (recording?.Failure is { } failure)
+        {
+            StopRecording();
+            RecordingError = $"Recording stopped: {failure}.";
+        }
         MetersUpdated?.Invoke(this, EventArgs.Empty);
     }
 
@@ -133,12 +138,14 @@ public sealed partial class AppModel : ObservableObject
     public void StopRecording()
     {
         if (recording == null) return;
-        ulong dropped = recording.Stop();
+        var finished = recording;
+        ulong dropped = finished.Stop();
         recording = null;
         IsRecording = false;
         RecordingStartedAt = null;
         SetTransmitterRecording(false);
         if (dropped > 0) RecordingError = $"Recording dropped {dropped} buffers (disk too slow).";
+        if (finished.Failure is { } failure) RecordingError = $"Recording stopped: {failure}.";
     }
 
     private void SetTransmitterRecording(bool on)

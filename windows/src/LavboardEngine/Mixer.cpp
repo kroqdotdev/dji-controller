@@ -105,6 +105,9 @@ struct LbEngine {
     Output venue, stream;
     std::vector<float> silence;
     std::thread mixer;
+    /// The tracks' stereo flags from the last start, kept through stops (see stopLocked).
+    std::array<bool, AC_MAX_TRACKS> trackStereo{};
+    int layoutTracks = 0;
 };
 
 void LbEngine::fail() {
@@ -279,8 +282,12 @@ void LbEngine::stopLocked() {
     for (Output *output : {&venue, &stream}) {
         if (output->stream) output->stream->stop();
     }
-    // Every thread has finished, so nothing reads the sources any more.
-    AudioCoreSetLayout(core, nullptr, 0, -1, -1);
+    // Every thread has finished, so nothing reads the sources any more. The tracks stay, silent:
+    // the recording ring's layout depends on their count and stereo flags, and a recording goes on
+    // through a rebuild (device changes, a new buffer size) with only a gap.
+    std::array<AudioCoreTrackLayout, AC_MAX_TRACKS> silent{};
+    for (int t = 0; t < layoutTracks; t++) silent[t] = {-1, -1, -1, -1, trackStereo[t], -1};
+    AudioCoreSetLayout(core, silent.data(), layoutTracks, -1, -1);
     AudioCoreSetAsyncSources(core, nullptr, 0);
     for (auto &input : inputs) AudioCoreAsyncDestroy(input.source);
     inputs.clear();
@@ -402,6 +409,8 @@ int32_t LbEngine::start(const LbEngineConfig &config, LbEngineInfo &info, std::w
     }
     AudioCoreSetAsyncSources(core, sources.data(), sourceCount);
     AudioCoreSetLayout(core, layouts.data(), trackCount, venue.active ? kVenueBuffer : -1, stream.active ? kStreamBuffer : -1);
+    layoutTracks = trackCount;
+    for (int t = 0; t < trackCount; t++) trackStereo[t] = layouts[t].stereo;
 
     // Resampled devices start first, so audio is buffered by the time the mixer runs.
     running = true;

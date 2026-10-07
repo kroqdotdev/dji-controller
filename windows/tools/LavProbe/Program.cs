@@ -12,7 +12,7 @@ using Lavboard.Model;
 //   LavProbe tone <out.wav> [--freq 1000] [--seconds 10] [--level -12]
 //   LavProbe run [--track dev=<name>:<channel>[s]] [--track app=<exe>] [--track system] [--no-venue <track>]
 //                [--fader <track>=<dB>] [--venue <name>] [--stream <name>] [--seconds 10] [--period 64]
-//                [--record <folder>] [--float]
+//                [--record <folder>] [--float] [--rebuild-at <seconds>]
 //   LavProbe analyze <file.wav> [--freq 1000] [--channel 0]
 //
 // Device names match by substring, case-insensitively. Output goes to the console and, with
@@ -104,6 +104,7 @@ int Tone(List<string> a)
 int Run(List<string> a)
 {
     double seconds = Number(a, "--seconds", 10);
+    double rebuildAt = Number(a, "--rebuild-at", -1);
     uint period = (uint)Number(a, "--period", 64);
     string? record = Option(a, "--record");
     bool asFloat = a.Remove("--float");
@@ -179,6 +180,16 @@ int Run(List<string> a)
     while ((DateTime.Now - started).TotalSeconds < seconds && engine.IsRunning)
     {
         Thread.Sleep(1000);
+        if (rebuildAt >= 0 && (DateTime.Now - started).TotalSeconds >= rebuildAt)
+        {
+            // What a device change or a new buffer size does mid-recording.
+            rebuildAt = -1;
+            engine.Start(plan, period, core =>
+            {
+                for (int t = 0; t < tracks.Count; t++) Native.AudioCoreSetTrackVenueSend(core, t, tracks[t].SendToVenue);
+            });
+            Say("rebuilt the engine");
+        }
         var meters = Meters(engine.Core);
         var line = new List<string> { $"{(DateTime.Now - started).TotalSeconds,4:0}s", $"cb {meters.Callbacks - lastCallbacks}" };
         lastCallbacks = meters.Callbacks;
