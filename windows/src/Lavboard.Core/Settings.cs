@@ -17,7 +17,17 @@ public sealed class Settings
     public string RecordingFormat { get; set; } = "24-bit";
     public int BufferFrames { get; set; } = 64;
 
-    public static string DefaultPath { get; } =
+    /// <summary>
+    /// %APPDATA%\Lavboard. Not %LOCALAPPDATA%\Lavboard: that is the installer's folder, which
+    /// Velopack owns and removes on uninstall. Declared first: static initializers run in order.
+    /// </summary>
+    public static string DataFolder { get; } =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Lavboard");
+
+    public static string DefaultPath { get; } = Path.Combine(DataFolder, "settings.json");
+
+    /// <summary>Where development builds before the installer kept settings; moved once, on first load.</summary>
+    private static readonly string LegacyPath =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Lavboard", "settings.json");
 
     private static readonly JsonSerializerOptions Options = new()
@@ -34,6 +44,11 @@ public sealed class Settings
     {
         try
         {
+            if (path == DefaultPath && !File.Exists(path) && File.Exists(LegacyPath))
+            {
+                Directory.CreateDirectory(DataFolder);
+                File.Copy(LegacyPath, path);
+            }
             using var file = File.OpenRead(path);
             var settings = JsonSerializer.Deserialize<Settings>(file, Options) ?? new Settings();
             settings.Tracks = settings.Tracks?.Take(Track.Maximum).ToList();

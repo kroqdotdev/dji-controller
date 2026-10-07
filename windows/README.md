@@ -53,6 +53,12 @@ LavProbe analyze "out\Session ...\01 Track 1.wav" --freq 1000
 
 SSH sessions have no desktop. On the dev VM, `Start-Gui.ps1` launches an app on the logged-in desktop and `Get-Screenshot.ps1` captures it. `tools/Focus-Window.ps1` brings a window to the front first, since Windows won't let a background launch take the foreground.
 
+## Releasing
+
+Releases are Velopack packages: `windows/scripts/Pack-Release.ps1 -Version 0.1.0` builds the app self-contained and packs `Lavboard-win-Setup.exe`, the full and delta packages and `releases.win.json` into `artifacts/releases` (install the packer first: `dotnet tool install -g vpk`). The **Windows release** workflow does the same on a `windows-v*` tag and publishes a GitHub release that is never marked latest (the macOS app's appcast lives at releases/latest). See [CONTRIBUTING](../CONTRIBUTING.md#windows).
+
+Installed copies check for updates on every launch, offer **Update to x.y.z** in the toolbar, and restart into the new version (never mid-recording). To test the update flow without publishing, pack two versions into one folder, install the older one, and point it at the folder with the `LAVBOARD_UPDATE_FEED` environment variable (a folder or URL).
+
 ## Matching the macOS look
 
 The two apps should look the same. To compare them, run `tools/parity-capture.sh` on a Mac (it stages the parity scene in a debug build and captures the window), launch the Windows app with `--scene parity` at the same width, and compare the two side by side. Strip widths follow the same rules on both (`DeskLayout` here, `Desk` in `ContentView.swift`), so at window widths of about 1230 and up the strips match pixel for pixel.

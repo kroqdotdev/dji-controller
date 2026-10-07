@@ -54,6 +54,12 @@ public sealed partial class SettingsView : UserControl
         buffer.IsEnabled = !app.IsRecording;
         buffer.SelectionChanged += (_, i) => app.BufferFrames = AppModel.BufferChoices[i];
         sections.Children.Add(Section(null, [Row("Audio buffer", buffer)], "Smaller buffers lower the delay but use more CPU."));
+
+        // Windows has no app menu for "Check for Updates…", so it lives here.
+        var check = new Button { Content = "Check for updates", FontSize = 13, IsEnabled = app.Updates.IsInstalled };
+        check.Click += (_, _) => app.Updates.CheckNow();
+        sections.Children.Add(Section(null, [Row($"Lavboard {app.Updates.CurrentVersion}", check)],
+            app.Updates.IsInstalled ? "Lavboard checks for updates every time it starts." : "Development builds don't update themselves."));
     }
 
     private static FrameworkElement Control(IMicSystem system, MicSetting setting)

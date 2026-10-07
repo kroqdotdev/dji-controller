@@ -1,0 +1,119 @@
+name: Windows release
+
+# Pushing a windows-v* tag builds Lavboard for Windows, packs it with Velopack and publishes a
+# GitHub release with the installer and the update feed. Windows releases are never marked latest:
+# the macOS app's update feed lives at releases/latest. Running the workflow by hand, or a pull
+# request that touches packaging, builds and packs without publishing.
+#
+# The build runs with read-only access; only the publish job, which runs no third-party actions,
+# can write releases.
+
+on:
+  push:
+    tags: ['windows-v*']
+  pull_request:
+    paths:
+      - .github/workflows/windows-release.yml
+      - windows/scripts/**
+      - windows/src/Lavboard/Lavboard.csproj
+      - windows/src/Lavboard/Program.cs
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build (nothing is published)
+        required: true
+        default: 0.0.1
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and pack
+    runs-on: windows-2025
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
+
+      - name: Version
+        id: version
+        shell: pwsh
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME -replace '^windows-v', '' }
+                     elseif ($env:REQUESTED_VERSION) { $env:REQUESTED_VERSION } else { '0.0.1' }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Version '$version' isn't x.y.z" }
+          "VERSION=$version" >> $env:GITHUB_ENV
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Test
+        run: |
+          msbuild windows/Lavboard.slnx -restore -p:Configuration=Release -p:Platform=x64 -nologo -v:minimal
+          windows/artifacts/bin/Lavboard.Tests/Release/net10.0-windows10.0.26100.0/Lavboard.Tests.exe
+
+      # Velopack makes a delta update from the previous release's full package, so start from the
+      # newest windows-v release's feed and package (none for the first release).
+      - name: Seed from the previous release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory releases | Out-Null
+          $previous = gh release list --repo $env:GITHUB_REPOSITORY --exclude-drafts --exclude-pre-releases --limit 100 --json tagName --jq '.[].tagName' |
+              Where-Object { $_ -like 'windows-v*' -and $_ -ne $env:GITHUB_REF_NAME } | Select-Object -First 1
+          if ($previous) {
+              gh release download $previous --repo $env:GITHUB_REPOSITORY --dir releases --pattern 'releases.win.json' --pattern '*-full.nupkg'
+              Write-Output "Seeded from $previous"
+          }
+          (Get-ChildItem releases -File).Name | Set-Content seeded.txt
+
+      - name: Pack
+        shell: pwsh
+        run: |
+          dotnet tool install -g vpk --version 1.2.161
+          windows/scripts/Pack-Release.ps1 -Version $env:VERSION -OutputDir "$env:GITHUB_WORKSPACE/releases"
+          # The previous release keeps its own packages; only the new feed replaces the seeded one.
+          Get-Content seeded.txt | Where-Object { $_ -and $_ -ne 'releases.win.json' } | ForEach-Object { Remove-Item "releases/$_" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Lavboard-windows
+          path: releases/
+
+  publish:
+    name: Publish release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Lavboard-windows
+          path: releases
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cat > notes.md <<EOF
+          Lavboard for Windows $VERSION.
+
+          Download **Lavboard-win-Setup.exe** and run it. Windows SmartScreen may say "Windows protected your PC" because the app isn't code-signed yet: choose **More info**, then **Run anyway**. Lavboard updates itself after that.
+          EOF
+          # Only what the installer and the updater need.
+          rm -f releases/RELEASES
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "Lavboard for Windows $VERSION" \
+            --notes-file notes.md --latest=false releases/*

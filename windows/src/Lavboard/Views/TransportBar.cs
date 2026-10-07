@@ -105,6 +105,9 @@ public sealed partial class TransportBar : UserControl
         dot.Visibility = recording ? Visibility.Collapsed : Visibility.Visible;
         square.Visibility = recording ? Visibility.Visible : Visibility.Collapsed;
         record.IsEnabled = recording || app.CanRecord;
+        ToolTipService.SetToolTip(record, app.Updates.IsBusy && !recording
+            ? "Recording is unavailable while Lavboard updates."
+            : "Record every mic to its own file, plus the stream mix (Ctrl+R)");
 
         timer.Visibility = recording ? Visibility.Visible : Visibility.Collapsed;
         destination.Visibility = change.Visibility = recording ? Visibility.Collapsed : Visibility.Visible;

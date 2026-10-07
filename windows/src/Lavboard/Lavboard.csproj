@@ -16,14 +16,22 @@
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- Unpackaged too, but publishing needs the MSIX tooling to carry Lavboard.pri and the
+         compiled XAML (.xbf) into the output; without it the installed app can't load its UI. -->
+    <EnableMsixTooling>true</EnableMsixTooling>
     <Version>0.1.0</Version>
+    <ApplicationIcon>Assets\Lavboard.ico</ApplicationIcon>
+    <!-- Program.cs is the entry point: Velopack's hooks run before the window. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="Assets\Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Lavboard.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\*-OFL.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
