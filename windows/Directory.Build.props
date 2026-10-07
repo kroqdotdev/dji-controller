@@ -8,6 +8,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <BaseOutputPath>$(MSBuildThisFileDirectory)artifacts\bin\$(MSBuildProjectName)\</BaseOutputPath>
     <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)artifacts\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <!-- Keep output paths free of the platform folder, however a project is built, so scripts and CI can rely on them. -->
+    <AppendPlatformToOutputPath>false</AppendPlatformToOutputPath>
     <!-- The native engine is built per platform; AnyCPU projects use the x64 build. -->
     <EnginePlatform Condition="'$(Platform)' == 'ARM64'">ARM64</EnginePlatform>
     <EnginePlatform Condition="'$(EnginePlatform)' == ''">x64</EnginePlatform>
