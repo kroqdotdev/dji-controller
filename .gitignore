@@ -12,3 +12,8 @@ dist/
 .build/
 .swiftpm/
 Package.resolved
+
+# Windows build output
+windows/artifacts/
+*.user
+.vs/

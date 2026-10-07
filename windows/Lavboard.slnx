@@ -1,0 +1,14 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="ARM64" />
+  </Configurations>
+  <Folder Name="/src/">
+    <Project Path="src/LavboardEngine/LavboardEngine.vcxproj" Id="6c1b9c6e-6f0f-4d43-9a7b-2b1e8e3b5a10" />
+    <Project Path="src/Lavboard.Core/Lavboard.Core.csproj" />
+    <Project Path="src/Lavboard/Lavboard.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Lavboard.Tests/Lavboard.Tests.csproj" />
+  </Folder>
+</Solution>
